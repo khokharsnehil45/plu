@@ -1,13 +1,11 @@
 pub mod format;
 pub mod loader;
-pub mod ops;
 pub mod types;
 pub mod ui;
 pub mod unloader;
 
 pub use format::{PluFormat, PLU_MAGIC, PLU_VERSION};
 pub use loader::PdfLoader;
-pub use ops::PdfOps;
 pub use types::{DocumentMeta, DumpFormat, OperationStats, PageData, PluDocument};
 pub use ui::run_interactive_ui;
 pub use unloader::PdfUnloader;

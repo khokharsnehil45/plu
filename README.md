@@ -48,28 +48,26 @@ plu --ui
 ```
 
 ```text
-PLU v1.0.0 • PDF Processor
+PLU v1.0.0 • PDF Loader & Unloader
 ────────────────────────────────────────────────────────────
  Welcome to PLU Engine!
- Ready to compress, merge, split, and extract text from your documents.
+ Ready to load PDF content and unload .plu files page by page.
 ────────────────────────────────────────────────────────────
- [1] Extract Text     Extract page-by-page text & dump (.plu, .txt, .json)
- [2] Compress PDF     Re-compress PDF streams with FlateDecode optimization
- [3] Split PDF        Split document by page ranges or into single pages
- [4] Merge PDFs       Combine multiple PDF files into a single document
- [5] Inspect .plu     Unload & verify high-speed .plu container (O(1) lookup)
- [6] Unpack .plu      Unpack all pages from .plu into a folder
- [7] Exit             Quit PLU Engine
+ [1] Load & Dump PDF   Extract page-by-page text & dump into .plu
+ [2] Unload .plu File  Read & inspect .plu container page by page
+ [3] Read Single Page  O(1) random-access page reader from .plu
+ [4] Unpack .plu Pages Unpack all pages from .plu into a folder
+ [5] Exit              Quit PLU Engine
 ────────────────────────────────────────────────────────────
- Select an option [1-7]: 
+ Select an option [1-5]: 
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Load and Dump PDF
-Extract page-by-page and dump directly into the native `.plu` binary format:
+### 1. Load and Dump PDF Page-by-Page (`--load` & `--unload`)
+Load any PDF, extract page-by-page concurrently, and dump into the `.plu` high-speed binary format:
 ```bash
 plu --load document.pdf --unload document.plu
 ```
@@ -86,37 +84,15 @@ plu --load document.pdf --unload document.json
 plu --load document.pdf --unload document.jsonl
 ```
 
-### 2. Compress PDF
-Re-compress PDF streams using FlateDecode optimization:
+### 2. Read and Unload `.plu` Containers Page-by-Page (`--unload`)
 ```bash
-plu --compress document.pdf --output compressed.pdf
-```
-
-### 3. Split PDF
-Split document by page range or into individual single-page files:
-```bash
-# Extract pages 1 to 5
-plu --split document.pdf --pages 1-5 --output split_part.pdf
-
-# Split entire PDF into individual single-page files
-plu --split document.pdf --output ./split_pages/
-```
-
-### 4. Merge PDFs
-Combine multiple PDF documents into a unified file:
-```bash
-plu --merge doc1.pdf doc2.pdf doc3.pdf --output merged.pdf
-```
-
-### 5. Unload & Inspect `.plu` Containers
-```bash
-# Verify container and print header metadata
+# Read container metadata, page count, and verify page checksums
 plu --unload document.plu
 
-# Inspect all page dimensions, word & character counts
+# Inspect page-by-page dimensions, character & word counts
 plu --unload document.plu --verbose
 
-# Microsecond O(1) random-access lookup for an individual page
+# Microsecond O(1) random-access lookup for a single page
 plu --unload document.plu --page 42
 
 # Unpack all pages into discrete files in a directory
