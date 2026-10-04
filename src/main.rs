@@ -1,10 +1,11 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use plu::loader::PdfLoader;
+use plu::ops::PdfOps;
 use plu::types::{DumpFormat, PageData, PluDocument};
 use plu::ui::{
-    print_bar_color, print_header, print_header_color, print_kv, print_kv_colored, print_row,
-    print_row_color, run_interactive_ui, BRIGHT_GREEN, CYAN, RED, YELLOW,
+    print_banner, print_divider, print_divider_color, print_kv, print_kv_colored,
+    run_interactive_ui, BRIGHT_CYAN, BRIGHT_GREEN, BRIGHT_WHITE, RED, RESET, YELLOW,
 };
 use plu::unloader::PdfUnloader;
 use std::path::{Path, PathBuf};
@@ -15,20 +16,40 @@ use std::time::Instant;
     name = "plu",
     author = "High Performance PDF Systems",
     version = "1.0.0",
-    about = "High-performance PDF Loader and Unloader with concurrent page-by-page extraction"
+    about = "High-performance PDF Processor: Load, Extract, Unload, Compress, Split, and Merge"
 )]
 struct Args {
-    /// Path to the input PDF file to load (page-by-page extraction)
+    /// Path to input PDF file to load (page-by-page extraction)
     #[arg(short = 'l', long = "load", value_name = "FILE_PATH")]
     load: Option<PathBuf>,
 
-    /// Path to the file to dump / unload to, or .plu file to unload from
+    /// Path to file to dump / unload to, or .plu file to unload from
     #[arg(short = 'u', long = "unload", value_name = "FILE_PATH")]
     unload: Option<PathBuf>,
+
+    /// Compress a PDF by re-encoding stream objects
+    #[arg(long = "compress", value_name = "FILE_PATH")]
+    compress: Option<PathBuf>,
+
+    /// Split a PDF by page ranges or unpack pages
+    #[arg(long = "split", value_name = "FILE_PATH")]
+    split: Option<PathBuf>,
+
+    /// Merge multiple PDF files into one
+    #[arg(long = "merge", num_args = 2.., value_name = "FILE_PATHS")]
+    merge: Option<Vec<PathBuf>>,
+
+    /// Output destination file for operations
+    #[arg(short = 'o', long = "output", value_name = "FILE_PATH")]
+    output: Option<PathBuf>,
 
     /// Specific page number to inspect or extract (1-based)
     #[arg(short = 'p', long = "page", value_name = "PAGE_NUM")]
     page: Option<u32>,
+
+    /// Page range for split or extraction, e.g. "1-5"
+    #[arg(long = "pages", value_name = "RANGE")]
+    pages: Option<String>,
 
     /// Unpack all pages from a .plu file into individual text files in this directory
     #[arg(long = "unpack", value_name = "OUTPUT_DIR")]
@@ -56,9 +77,9 @@ fn main() {
 
     if let Err(err) = run(args) {
         println!();
-        print_bar_color(RED);
-        print_row_color(&format!("ERROR: {err:#}"), RED);
-        print_bar_color(RED);
+        print_divider_color(RED);
+        println!(" {RED}ERROR: {err:#}{RESET}");
+        print_divider_color(RED);
         std::process::exit(1);
     }
 }
@@ -68,15 +89,32 @@ fn run(args: Args) -> Result<()> {
         return run_interactive_ui();
     }
 
+    // Compress mode
+    if let Some(ref in_pdf) = args.compress {
+        let out_pdf = args.output.clone().unwrap_or_else(|| {
+            let stem = in_pdf.file_stem().unwrap_or_default().to_string_lossy();
+            PathBuf::from(format!("{}_compressed.pdf", stem))
+        });
+        return handle_compress(in_pdf, &out_pdf);
+    }
+
+    // Split mode
+    if let Some(ref in_pdf) = args.split {
+        return handle_split(in_pdf, &args);
+    }
+
+    // Merge mode
+    if let Some(ref merge_files) = args.merge {
+        let out_pdf = args.output.clone().unwrap_or_else(|| PathBuf::from("merged.pdf"));
+        return handle_merge(merge_files, &out_pdf);
+    }
+
+    // Load and Unload pipeline
     match (&args.load, &args.unload) {
-        // Case 1: Both --load and --unload provided:
-        // plu --load input.pdf --unload output.plu (or output.txt, output.json)
         (Some(load_path), Some(unload_path)) => {
             handle_load_and_unload(load_path, unload_path, &args)
         }
 
-        // Case 2: Only --load provided:
-        // Default unload target is `<file_stem>.plu` or `plu`
         (Some(load_path), None) => {
             let default_unload = load_path
                 .file_stem()
@@ -85,21 +123,139 @@ fn run(args: Args) -> Result<()> {
             handle_load_and_unload(load_path, &default_unload, &args)
         }
 
-        // Case 3: Only --unload provided:
-        // Unload an existing .plu dump file (inspect, unpack, or display)
         (None, Some(unload_path)) => handle_unload_only(unload_path, &args),
 
-        // Case 4: Neither provided -> Launch interactive CLI UI
         (None, None) => run_interactive_ui(),
     }
+}
+
+fn handle_compress(in_path: &Path, out_path: &Path) -> Result<()> {
+    println!();
+    print_banner();
+    println!(" {YELLOW}Action{RESET}               : Compress PDF Streams");
+    print_kv("Input PDF", &in_path.display().to_string());
+    print_kv("Output PDF", &out_path.display().to_string());
+    print_divider();
+
+    let start = Instant::now();
+    let (orig, compressed) = PdfOps::compress_pdf(in_path, out_path)?;
+    let elapsed = start.elapsed();
+
+    let saved = orig.saturating_sub(compressed);
+    let ratio = if orig > 0 {
+        (saved as f64 / orig as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!();
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}PDF COMPRESSED SUCCESSFULLY{RESET}");
+    print_divider_color(BRIGHT_GREEN);
+    print_kv_colored("Original Size", &format!("{:.2} KB ({} bytes)", orig as f64 / 1024.0, orig), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Compressed Size", &format!("{:.2} KB ({} bytes)", compressed as f64 / 1024.0, compressed), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Reduction", &format!("{:.1}% saved ({} bytes)", ratio, saved), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
+
+    Ok(())
+}
+
+fn handle_split(in_path: &Path, args: &Args) -> Result<()> {
+    println!();
+    print_banner();
+    println!(" {YELLOW}Action{RESET}               : Split PDF");
+    print_kv("Input PDF", &in_path.display().to_string());
+
+    if let Some(ref range_str) = args.pages {
+        let mut pages = Vec::new();
+        for part in range_str.split(',') {
+            let part = part.trim();
+            if part.contains('-') {
+                let bounds: Vec<&str> = part.split('-').collect();
+                if bounds.len() == 2 {
+                    let start: u32 = bounds[0].trim().parse().unwrap_or(1);
+                    let end: u32 = bounds[1].trim().parse().unwrap_or(start);
+                    for p in start..=end {
+                        pages.push(p);
+                    }
+                }
+            } else if let Ok(p) = part.parse::<u32>() {
+                pages.push(p);
+            }
+        }
+
+        let out_path = args.output.clone().unwrap_or_else(|| PathBuf::from("split.pdf"));
+        print_kv("Target Output", &out_path.display().to_string());
+        print_divider();
+
+        let start = Instant::now();
+        let count = PdfOps::split_pages(in_path, &pages, &out_path)?;
+        let elapsed = start.elapsed();
+
+        println!();
+        print_divider_color(BRIGHT_GREEN);
+        println!(" {BRIGHT_GREEN}SPLIT COMPLETED{RESET}");
+        print_divider_color(BRIGHT_GREEN);
+        print_kv_colored("Extracted Pages", &count.to_string(), YELLOW, BRIGHT_GREEN);
+        print_kv_colored("Output File", &out_path.display().to_string(), YELLOW, BRIGHT_WHITE);
+        print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+        print_divider_color(BRIGHT_GREEN);
+    } else {
+        let out_dir = args.output.clone().unwrap_or_else(|| {
+            let stem = in_path.file_stem().unwrap_or_default().to_string_lossy();
+            PathBuf::from(format!("{}_pages", stem))
+        });
+        print_kv("Output Folder", &out_dir.display().to_string());
+        print_divider();
+
+        let start = Instant::now();
+        let count = PdfOps::split_all(in_path, &out_dir)?;
+        let elapsed = start.elapsed();
+
+        println!();
+        print_divider_color(BRIGHT_GREEN);
+        println!(" {BRIGHT_GREEN}SPLIT COMPLETED{RESET}");
+        print_divider_color(BRIGHT_GREEN);
+        print_kv_colored("Single-Page PDFs", &count.to_string(), YELLOW, BRIGHT_GREEN);
+        print_kv_colored("Output Folder", &out_dir.display().to_string(), YELLOW, BRIGHT_WHITE);
+        print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+        print_divider_color(BRIGHT_GREEN);
+    }
+
+    Ok(())
+}
+
+fn handle_merge(inputs: &[PathBuf], output: &Path) -> Result<()> {
+    println!();
+    print_banner();
+    println!(" {YELLOW}Action{RESET}               : Merge PDF Documents");
+    print_kv("Inputs Count", &inputs.len().to_string());
+    print_kv("Output PDF", &output.display().to_string());
+    print_divider();
+
+    let start = Instant::now();
+    let total_pages = PdfOps::merge_pdfs(inputs, output)?;
+    let elapsed = start.elapsed();
+
+    println!();
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}MERGE COMPLETED SUCCESSFULLY{RESET}");
+    print_divider_color(BRIGHT_GREEN);
+    print_kv_colored("Files Merged", &inputs.len().to_string(), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Total Pages", &total_pages.to_string(), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Output File", &output.display().to_string(), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
+
+    Ok(())
 }
 
 /// Executes the concurrent loader -> unloader streaming pipeline
 fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> Result<()> {
     println!();
-    print_bar_color(CYAN);
-    print_header("PLU: HIGH-PERFORMANCE CONCURRENT PDF PIPELINE");
-    print_bar_color(CYAN);
+    print_banner();
+    println!(" {YELLOW}Action{RESET}               : Concurrent Page-by-Page Extraction");
     print_kv("Input PDF", &load_path.display().to_string());
 
     let overall_start = Instant::now();
@@ -146,14 +302,13 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
         .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
     print_kv("Worker Threads", &effective_threads.to_string());
     print_kv("Unloader Thread", "1 (Dedicated OS Thread)");
-    print_bar_color(CYAN);
+    print_divider();
 
     let stats = if let Some(single_page) = args.page {
-        // Single page extraction mode
         if single_page < 1 || single_page > total_pages {
             bail!("Requested page {single_page} is out of range (1..={total_pages})");
         }
-        print_row(&format!("Extracting single page: {}", single_page));
+        println!(" Extracting single page: {}", single_page);
         let page = loader.extract_page(single_page)?;
         let doc = PluDocument::new(
             loader.source_path().to_string_lossy().to_string(),
@@ -163,7 +318,6 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
         );
         PdfUnloader::dump_with_format(&doc, unload_path, dump_format)?
     } else {
-        // Multi-threaded concurrent streaming mode
         let channel_cap = (effective_threads * 4).max(32);
         let (tx, rx) = crossbeam_channel::bounded::<PageData>(channel_cap);
 
@@ -192,9 +346,9 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     };
 
     println!();
-    print_bar_color(BRIGHT_GREEN);
-    print_header_color("PIPELINE COMPLETED SUCCESSFULLY", BRIGHT_GREEN, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}PIPELINE COMPLETED SUCCESSFULLY{RESET}");
+    print_divider_color(BRIGHT_GREEN);
     print_kv("Output File", &unload_path.display().to_string());
     print_kv_colored("Pages Processed", &stats.pages_processed.to_string(), YELLOW, BRIGHT_GREEN);
     print_kv("Total Chars", &stats.total_chars.to_string());
@@ -205,7 +359,7 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     );
     print_kv_colored("Throughput", &format!("{:.1} pages/sec", pps), YELLOW, BRIGHT_GREEN);
     print_kv_colored("Total Elapsed", &format!("{:.2?}", total_elapsed), YELLOW, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
 
     Ok(())
 }
@@ -213,61 +367,51 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
 /// Handles unloading / inspecting an existing .plu container
 fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
     println!();
-    print_bar_color(CYAN);
-    print_header("PLU UNLOADER: READING CONTAINER");
-    print_bar_color(CYAN);
+    print_banner();
+    println!(" {YELLOW}Action{RESET}               : Unload & Inspect .plu Container");
     print_kv("Reading File", &plu_path.display().to_string());
 
     let start = Instant::now();
 
-    // Check if unpacking to a directory was requested
     if let Some(ref out_dir) = args.unpack {
         print_kv("Unpack Target", &out_dir.display().to_string());
-        print_bar_color(CYAN);
+        print_divider();
         let count = PdfUnloader::unpack_to_directory(plu_path, out_dir)?;
         println!();
-        print_bar_color(BRIGHT_GREEN);
-        print_header_color("UNPACK COMPLETED", BRIGHT_GREEN, BRIGHT_GREEN);
-        print_bar_color(BRIGHT_GREEN);
+        print_divider_color(BRIGHT_GREEN);
+        println!(" {BRIGHT_GREEN}UNPACK COMPLETED{RESET}");
+        print_divider_color(BRIGHT_GREEN);
         print_kv_colored("Unpacked Pages", &count.to_string(), YELLOW, BRIGHT_GREEN);
         print_kv("Destination", &out_dir.display().to_string());
         print_kv_colored("Elapsed Time", &format!("{:.2?}", start.elapsed()), YELLOW, BRIGHT_GREEN);
-        print_bar_color(BRIGHT_GREEN);
+        print_divider_color(BRIGHT_GREEN);
         return Ok(());
     }
 
-    // Check if a single page was requested
     if let Some(page_num) = args.page {
         let page = PdfUnloader::unload_single_page(plu_path, page_num)?;
         let elapsed = start.elapsed();
         println!();
-        print_bar_color(BRIGHT_GREEN);
-        print_header_color(
-            &format!("PAGE {} CONTENT (O(1) LOOKUP)", page.page_num),
-            BRIGHT_GREEN,
-            BRIGHT_GREEN,
-        );
-        print_bar_color(BRIGHT_GREEN);
+        print_divider_color(BRIGHT_GREEN);
+        println!(" {BRIGHT_GREEN}PAGE {} CONTENT (O(1) RANDOM ACCESS LOOKUP){RESET}", page.page_num);
+        print_divider_color(BRIGHT_GREEN);
         print_kv("Dimensions", &format!("{}x{} pt", page.width, page.height));
         print_kv("Characters", &page.char_count.to_string());
         print_kv("Words", &page.word_count.to_string());
         print_kv_colored("Lookup Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
-        print_bar_color(CYAN);
-        for line in page.text.lines() {
-            print_row(line);
-        }
-        print_bar_color(CYAN);
+        print_divider();
+        println!("{}", page.text.trim());
+        print_divider();
         return Ok(());
     }
 
-    // Read full container
     let doc = PdfUnloader::unload_file(plu_path)?;
     let elapsed = start.elapsed();
 
     println!();
-    print_bar_color(BRIGHT_GREEN);
-    print_header_color("CONTAINER VERIFIED AND LOADED", BRIGHT_GREEN, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}CONTAINER VERIFIED AND LOADED{RESET}");
+    print_divider_color(BRIGHT_GREEN);
     print_kv("Source PDF", &doc.meta.source_path);
     if let Some(ref title) = doc.meta.title {
         print_kv("Title", title);
@@ -279,28 +423,23 @@ fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
     print_kv("Total Characters", &doc.meta.total_chars.to_string());
     print_kv("Total Words", &doc.meta.total_words.to_string());
     print_kv_colored("Verification Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
 
     if args.verbose {
         println!();
-        print_bar_color(CYAN);
-        print_header("PAGE INVENTORY");
-        print_bar_color(CYAN);
+        print_divider();
+        println!(" {BRIGHT_CYAN}PAGE INVENTORY{RESET}");
+        print_divider();
         for p in &doc.pages {
-            let row = format!(
-                "Page {:>4} | {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
+            println!(
+                " Page {:>4} : {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
                 p.page_num, p.width, p.height, p.char_count, p.word_count
             );
-            print_row(&row);
         }
-        print_bar_color(CYAN);
+        print_divider();
     } else {
-        print_bar_color(CYAN);
-        print_row_color(
-            "Tip: Use `--verbose` for full inventory, or `--page <N>` for single page.",
-            YELLOW,
-        );
-        print_bar_color(CYAN);
+        println!(" {YELLOW}Tip:{RESET} Use `--verbose` for full inventory, or `--page <N>` for single page.");
+        print_divider();
     }
 
     Ok(())

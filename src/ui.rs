@@ -4,9 +4,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::loader::PdfLoader;
+use crate::ops::PdfOps;
 use crate::unloader::PdfUnloader;
-
-const UI_WIDTH: usize = 78;
 
 // ANSI Color Escape Sequences
 pub const RESET: &str = "\x1b[0m";
@@ -20,143 +19,64 @@ pub const BRIGHT_YELLOW: &str = "\x1b[1;33m";
 pub const BRIGHT_MAGENTA: &str = "\x1b[1;35m";
 pub const RED: &str = "\x1b[1;31m";
 pub const BRIGHT_WHITE: &str = "\x1b[1;37m";
+pub const GRAY: &str = "\x1b[90m";
 
-/// Prints a horizontal boundary line using '=' with specified ANSI color
-pub fn print_bar_color(color: &str) {
-    println!("{}{}{}", color, "=".repeat(UI_WIDTH), RESET);
+const DIVIDER: &str = "────────────────────────────────────────────────────────────";
+
+/// Prints the exact signature welcome banner requested
+pub fn print_banner() {
+    println!("{BRIGHT_CYAN}PLU{RESET} {YELLOW}v1.0.0{RESET} {BRIGHT_MAGENTA}•{RESET} {BRIGHT_WHITE}PDF Processor{RESET}");
+    println!("{CYAN}{}{RESET}", DIVIDER);
+    println!(" {BRIGHT_GREEN}Welcome to PLU Engine!{RESET}");
+    println!(" {BRIGHT_WHITE}Ready to compress, merge, split, and extract text from your documents.{RESET}");
+    println!("{CYAN}{}{RESET}", DIVIDER);
 }
 
-/// Prints standard cyan boundary line using '='
-pub fn print_bar() {
-    print_bar_color(CYAN);
+/// Prints a horizontal divider line
+pub fn print_divider() {
+    println!("{CYAN}{}{RESET}", DIVIDER);
 }
 
-/// Prints a row framed with '|' on both ends
-pub fn print_row(text: &str) {
-    print_row_color(text, BRIGHT_WHITE);
+/// Prints a colored horizontal divider line
+pub fn print_divider_color(color: &str) {
+    println!("{}{}{}", color, DIVIDER, RESET);
 }
 
-/// Prints a row with custom text color, framed with '|'
-pub fn print_row_color(text: &str, text_color: &str) {
-    let inner_width = UI_WIDTH.saturating_sub(4);
-    if text.len() <= inner_width {
-        let padding = " ".repeat(inner_width - text.len());
-        println!(
-            "{CYAN}|{RESET} {text_color}{}{RESET}{} {CYAN}|{RESET}",
-            text, padding
-        );
-    } else {
-        let truncated = &text[..inner_width];
-        println!("{CYAN}|{RESET} {text_color}{}{RESET} {CYAN}|{RESET}", truncated);
-    }
-}
-
-/// Prints a centered header row framed with '|'
-pub fn print_header(title: &str) {
-    print_header_color(title, BRIGHT_CYAN, CYAN);
-}
-
-/// Prints a centered header row with customizable colors
-pub fn print_header_color(title: &str, title_color: &str, border_color: &str) {
-    let inner_width = UI_WIDTH.saturating_sub(4);
-    if title.len() >= inner_width {
-        let truncated = &title[..inner_width];
-        println!(
-            "{border_color}|{RESET} {title_color}{}{RESET} {border_color}|{RESET}",
-            truncated
-        );
-    } else {
-        let total_pad = inner_width - title.len();
-        let left_pad = " ".repeat(total_pad / 2);
-        let right_pad = " ".repeat(total_pad - left_pad.len());
-        println!(
-            "{border_color}|{RESET} {left_pad}{title_color}{}{RESET}{right_pad} {border_color}|{RESET}",
-            title
-        );
-    }
-}
-
-/// Prints a formatted menu option: | [1] Load PDF & Dump... |
-pub fn print_menu_option(num: &str, text: &str) {
-    let tag = format!("[{}]", num);
-    let tag_len = tag.len();
-    let text_len = text.len();
-    let inner_width = UI_WIDTH.saturating_sub(4);
-
-    let space_between = 1;
-    let total_used = tag_len + space_between + text_len;
-
-    if total_used <= inner_width {
-        let padding = " ".repeat(inner_width - total_used);
-        println!(
-            "{CYAN}|{RESET} {BRIGHT_YELLOW}{}{RESET} {BRIGHT_WHITE}{}{RESET}{} {CYAN}|{RESET}",
-            tag, text, padding
-        );
-    } else {
-        let max_text = inner_width.saturating_sub(tag_len + space_between);
-        let truncated = &text[..max_text.min(text.len())];
-        println!(
-            "{CYAN}|{RESET} {BRIGHT_YELLOW}{}{RESET} {BRIGHT_WHITE}{}{RESET} {CYAN}|{RESET}",
-            tag, truncated
-        );
-    }
-}
-
-/// Prints a key-value row: | Key             | Value                         |
+/// Prints a key-value row with clean alignment
 pub fn print_kv(key: &str, value: &str) {
     print_kv_colored(key, value, YELLOW, BRIGHT_GREEN);
 }
 
-/// Prints a key-value row with customizable key & value colors
+/// Prints a key-value row with custom colors
 pub fn print_kv_colored(key: &str, value: &str, key_color: &str, val_color: &str) {
-    let col1_width = 20;
-    let col2_width = UI_WIDTH.saturating_sub(col1_width + 7);
+    println!(" {key_color}{:<20}{RESET} : {val_color}{}{RESET}", key, value);
+}
 
-    let key_pad = if key.len() < col1_width {
-        " ".repeat(col1_width - key.len())
-    } else {
-        String::new()
-    };
-    let key_str = if key.len() > col1_width {
-        &key[..col1_width]
-    } else {
-        key
-    };
-
-    let val_str = if value.len() > col2_width {
-        &value[..col2_width]
-    } else {
-        value
-    };
-    let val_pad = if val_str.len() < col2_width {
-        " ".repeat(col2_width - val_str.len())
-    } else {
-        String::new()
-    };
-
+/// Prints a formatted menu option with title and description
+pub fn print_menu_item(tag: &str, title: &str, desc: &str) {
     println!(
-        "{CYAN}|{RESET} {key_color}{}{RESET}{} {CYAN}|{RESET} {val_color}{}{RESET}{} {CYAN}|{RESET}",
-        key_str, key_pad, val_str, val_pad
+        " {BRIGHT_YELLOW}[{}]{RESET} {BRIGHT_WHITE}{:<16}{RESET} {GRAY}{}{RESET}",
+        tag, title, desc
     );
 }
 
-/// Runs the interactive CLI UI using strictly '=' and '|' with rich terminal colors
+/// Runs the interactive CLI UI
 pub fn run_interactive_ui() -> Result<()> {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
     loop {
         println!();
-        print_bar_color(CYAN);
-        print_header("PLU: PDF LOADER & UNLOADER INTERACTIVE UI");
-        print_bar_color(CYAN);
-        print_menu_option("1", "Load PDF & Dump (Concurrent Page-by-Page Extraction)");
-        print_menu_option("2", "Unload & Inspect .plu Container File");
-        print_menu_option("3", "Read Single Page from .plu (O(1) Random Access)");
-        print_menu_option("4", "Unpack .plu Pages to Directory");
-        print_menu_option("5", "Exit");
-        print_bar_color(CYAN);
-        print!("{CYAN}|{RESET} {BRIGHT_MAGENTA}Select an option [1-5]:{RESET} ");
+        print_banner();
+        print_menu_item("1", "Extract Text", "Extract page-by-page text & dump (.plu, .txt, .json)");
+        print_menu_item("2", "Compress PDF", "Re-compress PDF streams with FlateDecode optimization");
+        print_menu_item("3", "Split PDF", "Split document by page ranges or into single pages");
+        print_menu_item("4", "Merge PDFs", "Combine multiple PDF files into a single document");
+        print_menu_item("5", "Inspect .plu", "Unload & verify high-speed .plu container (O(1) lookup)");
+        print_menu_item("6", "Unpack .plu", "Unpack all pages from .plu into a folder");
+        print_menu_item("7", "Exit", "Quit PLU Engine");
+        print_divider();
+        print!(" {BRIGHT_MAGENTA}Select an option [1-7]:{RESET} ");
         io::stdout().flush()?;
 
         let mut choice = String::new();
@@ -167,21 +87,23 @@ pub fn run_interactive_ui() -> Result<()> {
 
         match choice {
             "1" => ui_load_and_dump(&mut reader)?,
-            "2" => ui_unload_inspect(&mut reader)?,
-            "3" => ui_read_single_page(&mut reader)?,
-            "4" => ui_unpack_directory(&mut reader)?,
-            "5" | "q" | "exit" => {
+            "2" => ui_compress_pdf(&mut reader)?,
+            "3" => ui_split_pdf(&mut reader)?,
+            "4" => ui_merge_pdfs(&mut reader)?,
+            "5" => ui_unload_inspect(&mut reader)?,
+            "6" => ui_unpack_directory(&mut reader)?,
+            "7" | "q" | "exit" => {
                 println!();
-                print_bar_color(BRIGHT_GREEN);
-                print_header_color("Exiting PLU. Goodbye!", BRIGHT_GREEN, BRIGHT_GREEN);
-                print_bar_color(BRIGHT_GREEN);
+                print_divider_color(BRIGHT_GREEN);
+                println!(" {BRIGHT_GREEN}Exiting PLU. Have a great day!{RESET}");
+                print_divider_color(BRIGHT_GREEN);
                 break;
             }
             _ => {
                 println!();
-                print_bar_color(RED);
-                print_row_color("Invalid selection. Please choose an option between 1 and 5.", RED);
-                print_bar_color(RED);
+                print_divider_color(RED);
+                println!(" {RED}Invalid choice. Please select an option from 1 to 7.{RESET}");
+                print_divider_color(RED);
             }
         }
     }
@@ -190,29 +112,28 @@ pub fn run_interactive_ui() -> Result<()> {
 }
 
 fn prompt_input<R: BufRead>(reader: &mut R, prompt: &str) -> Result<String> {
-    print!("{CYAN}|{RESET} {BRIGHT_MAGENTA}{}{RESET} ", prompt);
+    print!(" {BRIGHT_MAGENTA}{}{RESET} ", prompt);
     io::stdout().flush()?;
     let mut line = String::new();
     reader.read_line(&mut line)?;
     Ok(line.trim().to_string())
 }
 
+/// Option 1: Extract Text & Dump
 fn ui_load_and_dump<R: BufRead>(reader: &mut R) -> Result<()> {
     println!();
-    print_bar_color(CYAN);
-    print_header("LOAD PDF & DUMP PIPELINE");
-    print_bar_color(CYAN);
+    print_divider();
+    println!(" {BRIGHT_CYAN}PAGE-BY-PAGE EXTRACTION & DUMP PIPELINE{RESET}");
+    print_divider();
 
     let pdf_input = prompt_input(reader, "Enter input PDF path:")?;
     if pdf_input.is_empty() {
-        print_row_color("Operation cancelled: empty PDF path.", YELLOW);
-        print_bar();
+        println!(" {YELLOW}Operation cancelled.{RESET}");
         return Ok(());
     }
     let pdf_path = PathBuf::from(&pdf_input);
     if !pdf_path.exists() {
-        print_row_color(&format!("Error: File does not exist: {}", pdf_input), RED);
-        print_bar_color(RED);
+        println!(" {RED}Error: File does not exist: {}{RESET}", pdf_input);
         return Ok(());
     }
 
@@ -233,9 +154,9 @@ fn ui_load_and_dump<R: BufRead>(reader: &mut R) -> Result<()> {
     let threads: Option<usize> = threads_input.parse().ok();
 
     println!();
-    print_bar_color(CYAN);
-    print_header("STARTING CONCURRENT PIPELINE");
-    print_bar_color(CYAN);
+    print_divider();
+    println!(" {BRIGHT_CYAN}STARTING EXTRACTION{RESET}");
+    print_divider();
     print_kv("Input PDF", &pdf_path.display().to_string());
     print_kv("Output File", &output_path.display().to_string());
 
@@ -243,8 +164,7 @@ fn ui_load_and_dump<R: BufRead>(reader: &mut R) -> Result<()> {
     let loader = match PdfLoader::load_file(&pdf_path) {
         Ok(l) => l,
         Err(e) => {
-            print_row_color(&format!("Loader Error: {}", e), RED);
-            print_bar_color(RED);
+            println!(" {RED}Loader Error: {}{RESET}", e);
             return Ok(());
         }
     };
@@ -256,12 +176,12 @@ fn ui_load_and_dump<R: BufRead>(reader: &mut R) -> Result<()> {
     print_kv("Target Format", &format.to_string());
     print_kv("Discovered Pages", &total_pages.to_string());
     if let Some(ref title) = meta.title {
-        print_kv("Title", title);
+        print_kv("Document Title", title);
     }
     if let Some(ref author) = meta.author {
-        print_kv("Author", author);
+        print_kv("Document Author", author);
     }
-    print_bar_color(CYAN);
+    print_divider();
 
     let channel_cap = (threads.unwrap_or(8) * 4).max(32);
     let (tx, rx) = crossbeam_channel::bounded(channel_cap);
@@ -277,13 +197,11 @@ fn ui_load_and_dump<R: BufRead>(reader: &mut R) -> Result<()> {
     let stats = match unloader_handle.join() {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
-            print_row_color(&format!("Unloader Error: {}", e), RED);
-            print_bar_color(RED);
+            println!(" {RED}Unloader Error: {}{RESET}", e);
             return Ok(());
         }
         Err(_) => {
-            print_row_color("Unloader thread panicked!", RED);
-            print_bar_color(RED);
+            println!(" {RED}Unloader thread panicked!{RESET}");
             return Ok(());
         }
     };
@@ -296,37 +214,233 @@ fn ui_load_and_dump<R: BufRead>(reader: &mut R) -> Result<()> {
     };
 
     println!();
-    print_bar_color(BRIGHT_GREEN);
-    print_header_color("PIPELINE COMPLETED SUCCESSFULLY", BRIGHT_GREEN, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}PIPELINE COMPLETED SUCCESSFULLY{RESET}");
+    print_divider_color(BRIGHT_GREEN);
+    print_kv_colored("Output File", &output_path.display().to_string(), YELLOW, BRIGHT_WHITE);
     print_kv_colored("Pages Processed", &stats.pages_processed.to_string(), YELLOW, BRIGHT_GREEN);
     print_kv_colored("Total Chars", &stats.total_chars.to_string(), YELLOW, BRIGHT_WHITE);
     print_kv_colored("Total Words", &stats.total_words.to_string(), YELLOW, BRIGHT_WHITE);
-    print_kv_colored("Bytes Written", &format!("{} bytes", stats.bytes_written), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Payload Size", &format!("{:.2} KB ({} bytes)", stats.bytes_written as f64 / 1024.0, stats.bytes_written), YELLOW, BRIGHT_WHITE);
     print_kv_colored("Throughput", &format!("{:.1} pages/sec", pps), YELLOW, BRIGHT_GREEN);
     print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
 
     Ok(())
 }
 
-fn ui_unload_inspect<R: BufRead>(reader: &mut R) -> Result<()> {
+/// Option 2: Compress PDF
+fn ui_compress_pdf<R: BufRead>(reader: &mut R) -> Result<()> {
     println!();
-    print_bar_color(CYAN);
-    print_header("UNLOAD & INSPECT .PLU CONTAINER");
-    print_bar_color(CYAN);
+    print_divider();
+    println!(" {BRIGHT_CYAN}COMPRESS PDF STREAMS{RESET}");
+    print_divider();
 
-    let plu_input = prompt_input(reader, "Enter .plu container path:")?;
-    if plu_input.is_empty() {
-        print_row_color("Operation cancelled: empty path.", YELLOW);
-        print_bar_color(CYAN);
+    let pdf_input = prompt_input(reader, "Enter input PDF path:")?;
+    if pdf_input.is_empty() {
+        return Ok(());
+    }
+    let in_path = PathBuf::from(&pdf_input);
+    if !in_path.exists() {
+        println!(" {RED}Error: File does not exist: {}{RESET}", pdf_input);
         return Ok(());
     }
 
+    let default_output = in_path
+        .file_stem()
+        .map(|s| format!("{}_compressed.pdf", s.to_string_lossy()))
+        .unwrap_or_else(|| "compressed.pdf".to_string());
+
+    let out_prompt = format!("Enter destination path [default: {}]:", default_output);
+    let out_input = prompt_input(reader, &out_prompt)?;
+    let out_path = if out_input.is_empty() {
+        PathBuf::from(default_output)
+    } else {
+        PathBuf::from(out_input)
+    };
+
+    println!();
+    println!(" {CYAN}Compressing PDF stream objects...{RESET}");
+    let start = Instant::now();
+    let (orig_size, new_size) = PdfOps::compress_pdf(&in_path, &out_path)?;
+    let elapsed = start.elapsed();
+
+    let saved_bytes = orig_size.saturating_sub(new_size);
+    let ratio = if orig_size > 0 {
+        (saved_bytes as f64 / orig_size as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!();
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}PDF COMPRESSED SUCCESSFULLY{RESET}");
+    print_divider_color(BRIGHT_GREEN);
+    print_kv_colored("Original Size", &format!("{:.2} KB ({} bytes)", orig_size as f64 / 1024.0, orig_size), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Compressed Size", &format!("{:.2} KB ({} bytes)", new_size as f64 / 1024.0, new_size), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Reduction", &format!("{:.1}% saved ({} bytes)", ratio, saved_bytes), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Output File", &out_path.display().to_string(), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
+
+    Ok(())
+}
+
+/// Option 3: Split PDF
+fn ui_split_pdf<R: BufRead>(reader: &mut R) -> Result<()> {
+    println!();
+    print_divider();
+    println!(" {BRIGHT_CYAN}SPLIT PDF DOCUMENT{RESET}");
+    print_divider();
+
+    let pdf_input = prompt_input(reader, "Enter input PDF path:")?;
+    if pdf_input.is_empty() {
+        return Ok(());
+    }
+    let in_path = PathBuf::from(&pdf_input);
+    if !in_path.exists() {
+        println!(" {RED}Error: File does not exist: {}{RESET}", pdf_input);
+        return Ok(());
+    }
+
+    println!(" [1] Extract specific page range (e.g. 1-3, 5)");
+    println!(" [2] Split entire PDF into individual page files");
+    let mode = prompt_input(reader, "Choose mode [1/2]:")?;
+
+    match mode.trim() {
+        "1" => {
+            let pages_str = prompt_input(reader, "Enter pages (e.g. 1,2,3 or 1-4):")?;
+            let mut pages = Vec::new();
+            for part in pages_str.split(',') {
+                let part = part.trim();
+                if part.contains('-') {
+                    let bounds: Vec<&str> = part.split('-').collect();
+                    if bounds.len() == 2 {
+                        let start: u32 = bounds[0].trim().parse().unwrap_or(1);
+                        let end: u32 = bounds[1].trim().parse().unwrap_or(start);
+                        for p in start..=end {
+                            pages.push(p);
+                        }
+                    }
+                } else if let Ok(p) = part.parse::<u32>() {
+                    pages.push(p);
+                }
+            }
+
+            let out_prompt = "Enter output PDF path [default: split.pdf]:";
+            let out_input = prompt_input(reader, out_prompt)?;
+            let out_path = if out_input.is_empty() {
+                PathBuf::from("split.pdf")
+            } else {
+                PathBuf::from(out_input)
+            };
+
+            let start = Instant::now();
+            let count = PdfOps::split_pages(&in_path, &pages, &out_path)?;
+            let elapsed = start.elapsed();
+
+            println!();
+            print_divider_color(BRIGHT_GREEN);
+            println!(" {BRIGHT_GREEN}SPLIT COMPLETED{RESET}");
+            print_divider_color(BRIGHT_GREEN);
+            print_kv_colored("Extracted Pages", &count.to_string(), YELLOW, BRIGHT_GREEN);
+            print_kv_colored("Output File", &out_path.display().to_string(), YELLOW, BRIGHT_WHITE);
+            print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+            print_divider_color(BRIGHT_GREEN);
+        }
+        "2" => {
+            let default_dir = in_path
+                .file_stem()
+                .map(|s| format!("{}_pages", s.to_string_lossy()))
+                .unwrap_or_else(|| "split_pages".to_string());
+            let dir_prompt = format!("Enter destination folder [default: {}]:", default_dir);
+            let dir_input = prompt_input(reader, &dir_prompt)?;
+            let out_dir = if dir_input.is_empty() {
+                PathBuf::from(default_dir)
+            } else {
+                PathBuf::from(dir_input)
+            };
+
+            let start = Instant::now();
+            let count = PdfOps::split_all(&in_path, &out_dir)?;
+            let elapsed = start.elapsed();
+
+            println!();
+            print_divider_color(BRIGHT_GREEN);
+            println!(" {BRIGHT_GREEN}SPLIT COMPLETED{RESET}");
+            print_divider_color(BRIGHT_GREEN);
+            print_kv_colored("Total Single-Page PDFs", &count.to_string(), YELLOW, BRIGHT_GREEN);
+            print_kv_colored("Output Directory", &out_dir.display().to_string(), YELLOW, BRIGHT_WHITE);
+            print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+            print_divider_color(BRIGHT_GREEN);
+        }
+        _ => println!(" {YELLOW}Invalid split mode selected.{RESET}"),
+    }
+
+    Ok(())
+}
+
+/// Option 4: Merge PDFs
+fn ui_merge_pdfs<R: BufRead>(reader: &mut R) -> Result<()> {
+    println!();
+    print_divider();
+    println!(" {BRIGHT_CYAN}MERGE PDF DOCUMENTS{RESET}");
+    print_divider();
+
+    println!(" {GRAY}Enter PDF paths separated by spaces or commas:{RESET}");
+    let paths_input = prompt_input(reader, "PDF paths to merge:")?;
+    let inputs: Vec<PathBuf> = paths_input
+        .split([',', ' '])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
+
+    if inputs.len() < 2 {
+        println!(" {YELLOW}Please provide at least 2 PDF files to merge.{RESET}");
+        return Ok(());
+    }
+
+    let out_input = prompt_input(reader, "Enter output path [default: merged.pdf]:")?;
+    let out_path = if out_input.is_empty() {
+        PathBuf::from("merged.pdf")
+    } else {
+        PathBuf::from(out_input)
+    };
+
+    println!();
+    println!(" {CYAN}Merging {} documents...{RESET}", inputs.len());
+    let start = Instant::now();
+    let total_pages = PdfOps::merge_pdfs(&inputs, &out_path)?;
+    let elapsed = start.elapsed();
+
+    println!();
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}PDFS MERGED SUCCESSFULLY{RESET}");
+    print_divider_color(BRIGHT_GREEN);
+    print_kv_colored("Files Merged", &inputs.len().to_string(), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Total Merged Pages", &total_pages.to_string(), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Output File", &out_path.display().to_string(), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
+
+    Ok(())
+}
+
+/// Option 5: Inspect .plu Container
+fn ui_unload_inspect<R: BufRead>(reader: &mut R) -> Result<()> {
+    println!();
+    print_divider();
+    println!(" {BRIGHT_CYAN}UNLOAD & INSPECT .PLU CONTAINER{RESET}");
+    print_divider();
+
+    let plu_input = prompt_input(reader, "Enter .plu container path:")?;
+    if plu_input.is_empty() {
+        return Ok(());
+    }
     let plu_path = PathBuf::from(&plu_input);
     if !plu_path.exists() {
-        print_row_color(&format!("Error: File does not exist: {}", plu_input), RED);
-        print_bar_color(RED);
+        println!(" {RED}Error: File does not exist: {}{RESET}", plu_input);
         return Ok(());
     }
 
@@ -334,22 +448,21 @@ fn ui_unload_inspect<R: BufRead>(reader: &mut R) -> Result<()> {
     let doc = match PdfUnloader::unload_file(&plu_path) {
         Ok(d) => d,
         Err(e) => {
-            print_row_color(&format!("Error reading .plu: {}", e), RED);
-            print_bar_color(RED);
+            println!(" {RED}Error reading .plu: {}{RESET}", e);
             return Ok(());
         }
     };
     let elapsed = start.elapsed();
 
     println!();
-    print_bar_color(BRIGHT_GREEN);
-    print_header_color("CONTAINER METADATA VERIFIED", BRIGHT_GREEN, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
-    print_kv("Container File", &plu_path.display().to_string());
-    print_kv("Original Source", &doc.meta.source_path);
-    print_kv("Total Pages", &doc.meta.page_count.to_string());
-    print_kv("Total Characters", &doc.meta.total_chars.to_string());
-    print_kv("Total Words", &doc.meta.total_words.to_string());
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}CONTAINER METADATA VERIFIED{RESET}");
+    print_divider_color(BRIGHT_GREEN);
+    print_kv_colored("Container File", &plu_path.display().to_string(), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Original Source", &doc.meta.source_path, YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Total Pages", &doc.meta.page_count.to_string(), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Total Characters", &doc.meta.total_chars.to_string(), YELLOW, BRIGHT_WHITE);
+    print_kv_colored("Total Words", &doc.meta.total_words.to_string(), YELLOW, BRIGHT_WHITE);
     if let Some(ref t) = doc.meta.title {
         print_kv("Title", t);
     }
@@ -357,90 +470,36 @@ fn ui_unload_inspect<R: BufRead>(reader: &mut R) -> Result<()> {
         print_kv("Author", a);
     }
     print_kv_colored("Verification Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
 
     let show_pages = prompt_input(reader, "Display per-page breakdown? [y/N]:")?;
     if show_pages.eq_ignore_ascii_case("y") {
-        print_bar_color(CYAN);
-        print_header("PAGE INVENTORY");
-        print_bar_color(CYAN);
+        print_divider();
+        println!(" {BRIGHT_CYAN}PAGE INVENTORY{RESET}");
+        print_divider();
         for p in &doc.pages {
-            let row = format!(
-                "Page {:>4} | {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
+            println!(
+                " Page {:>4} : {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
                 p.page_num, p.width, p.height, p.char_count, p.word_count
             );
-            print_row(&row);
         }
-        print_bar_color(CYAN);
+        print_divider();
     }
 
     Ok(())
 }
 
-fn ui_read_single_page<R: BufRead>(reader: &mut R) -> Result<()> {
-    println!();
-    print_bar_color(CYAN);
-    print_header("O(1) RANDOM ACCESS PAGE READER");
-    print_bar_color(CYAN);
-
-    let plu_input = prompt_input(reader, "Enter .plu container path:")?;
-    let plu_path = PathBuf::from(&plu_input);
-    if !plu_path.exists() {
-        print_row_color(&format!("Error: File does not exist: {}", plu_input), RED);
-        print_bar_color(RED);
-        return Ok(());
-    }
-
-    let page_str = prompt_input(reader, "Enter page number:")?;
-    let page_num: u32 = match page_str.parse() {
-        Ok(n) if n >= 1 => n,
-        _ => {
-            print_row_color("Invalid page number.", RED);
-            print_bar_color(RED);
-            return Ok(());
-        }
-    };
-
-    let start = Instant::now();
-    let page = match PdfUnloader::unload_single_page(&plu_path, page_num) {
-        Ok(p) => p,
-        Err(e) => {
-            print_row_color(&format!("Error: {}", e), RED);
-            print_bar_color(RED);
-            return Ok(());
-        }
-    };
-    let elapsed = start.elapsed();
-
-    println!();
-    print_bar_color(BRIGHT_GREEN);
-    print_header_color(&format!("PAGE {} CONTENT", page.page_num), BRIGHT_GREEN, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
-    print_kv("Dimensions", &format!("{}x{} pt", page.width, page.height));
-    print_kv("Characters", &page.char_count.to_string());
-    print_kv("Words", &page.word_count.to_string());
-    print_kv_colored("Lookup Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
-    print_bar_color(CYAN);
-
-    for line in page.text.lines() {
-        print_row(line);
-    }
-    print_bar_color(CYAN);
-
-    Ok(())
-}
-
+/// Option 6: Unpack .plu to Directory
 fn ui_unpack_directory<R: BufRead>(reader: &mut R) -> Result<()> {
     println!();
-    print_bar_color(CYAN);
-    print_header("UNPACK .PLU TO DIRECTORY");
-    print_bar_color(CYAN);
+    print_divider();
+    println!(" {BRIGHT_CYAN}UNPACK .PLU TO DIRECTORY{RESET}");
+    print_divider();
 
     let plu_input = prompt_input(reader, "Enter .plu container path:")?;
     let plu_path = PathBuf::from(&plu_input);
     if !plu_path.exists() {
-        print_row_color(&format!("Error: File does not exist: {}", plu_input), RED);
-        print_bar_color(RED);
+        println!(" {RED}Error: File does not exist: {}{RESET}", plu_input);
         return Ok(());
     }
 
@@ -461,21 +520,20 @@ fn ui_unpack_directory<R: BufRead>(reader: &mut R) -> Result<()> {
     let count = match PdfUnloader::unpack_to_directory(&plu_path, &out_dir) {
         Ok(c) => c,
         Err(e) => {
-            print_row_color(&format!("Unpack Error: {}", e), RED);
-            print_bar_color(RED);
+            println!(" {RED}Unpack Error: {}{RESET}", e);
             return Ok(());
         }
     };
     let elapsed = start.elapsed();
 
     println!();
-    print_bar_color(BRIGHT_GREEN);
-    print_header_color("UNPACK COMPLETED", BRIGHT_GREEN, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
+    println!(" {BRIGHT_GREEN}UNPACK COMPLETED{RESET}");
+    print_divider_color(BRIGHT_GREEN);
     print_kv_colored("Unpacked Pages", &count.to_string(), YELLOW, BRIGHT_GREEN);
-    print_kv("Destination", &out_dir.display().to_string());
+    print_kv_colored("Destination", &out_dir.display().to_string(), YELLOW, BRIGHT_WHITE);
     print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
-    print_bar_color(BRIGHT_GREEN);
+    print_divider_color(BRIGHT_GREEN);
 
     Ok(())
 }

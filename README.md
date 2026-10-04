@@ -39,23 +39,29 @@ cargo install --git https://github.com/khokharsnehil45/plu.git --force
 
 ## 🖥️ Interactive CLI UI
 
-Run `plu` with no arguments or pass `--ui` to launch the minimalist interactive menu styled purely with `=` and `|`:
+Run `plu` with no arguments or pass `--ui` to launch the interactive terminal interface:
 
 ```bash
+plu
+# or
 plu --ui
 ```
 
-```
-==============================================================================
-|                 PLU: PDF LOADER & UNLOADER INTERACTIVE UI                  |
-==============================================================================
-| [1] Load PDF & Dump (Concurrent Page-by-Page Extraction)                    |
-| [2] Unload & Inspect .plu Container File                                    |
-| [3] Read Single Page from .plu (O(1) Random Access)                         |
-| [4] Unpack .plu Pages to Directory                                          |
-| [5] Exit                                                                    |
-==============================================================================
-| Select an option [1-5]:
+```text
+PLU v1.0.0 • PDF Processor
+────────────────────────────────────────────────────────────
+ Welcome to PLU Engine!
+ Ready to compress, merge, split, and extract text from your documents.
+────────────────────────────────────────────────────────────
+ [1] Extract Text     Extract page-by-page text & dump (.plu, .txt, .json)
+ [2] Compress PDF     Re-compress PDF streams with FlateDecode optimization
+ [3] Split PDF        Split document by page ranges or into single pages
+ [4] Merge PDFs       Combine multiple PDF files into a single document
+ [5] Inspect .plu     Unload & verify high-speed .plu container (O(1) lookup)
+ [6] Unpack .plu      Unpack all pages from .plu into a folder
+ [7] Exit             Quit PLU Engine
+────────────────────────────────────────────────────────────
+ Select an option [1-7]: 
 ```
 
 ---
@@ -80,7 +86,29 @@ plu --load document.pdf --unload document.json
 plu --load document.pdf --unload document.jsonl
 ```
 
-### 2. Unload & Inspect `.plu` Containers
+### 2. Compress PDF
+Re-compress PDF streams using FlateDecode optimization:
+```bash
+plu --compress document.pdf --output compressed.pdf
+```
+
+### 3. Split PDF
+Split document by page range or into individual single-page files:
+```bash
+# Extract pages 1 to 5
+plu --split document.pdf --pages 1-5 --output split_part.pdf
+
+# Split entire PDF into individual single-page files
+plu --split document.pdf --output ./split_pages/
+```
+
+### 4. Merge PDFs
+Combine multiple PDF documents into a unified file:
+```bash
+plu --merge doc1.pdf doc2.pdf doc3.pdf --output merged.pdf
+```
+
+### 5. Unload & Inspect `.plu` Containers
 ```bash
 # Verify container and print header metadata
 plu --unload document.plu
