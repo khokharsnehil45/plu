@@ -2,7 +2,10 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use plu::loader::PdfLoader;
 use plu::types::{DumpFormat, PageData, PluDocument};
-use plu::ui::{print_bar, print_header, print_kv, print_row, run_interactive_ui};
+use plu::ui::{
+    print_bar_color, print_header, print_header_color, print_kv, print_kv_colored, print_row,
+    print_row_color, run_interactive_ui, BRIGHT_GREEN, CYAN, RED, YELLOW,
+};
 use plu::unloader::PdfUnloader;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -53,9 +56,9 @@ fn main() {
 
     if let Err(err) = run(args) {
         println!();
-        print_bar();
-        print_row(&format!("ERROR: {err:#}"));
-        print_bar();
+        print_bar_color(RED);
+        print_row_color(&format!("ERROR: {err:#}"), RED);
+        print_bar_color(RED);
         std::process::exit(1);
     }
 }
@@ -94,9 +97,9 @@ fn run(args: Args) -> Result<()> {
 /// Executes the concurrent loader -> unloader streaming pipeline
 fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> Result<()> {
     println!();
-    print_bar();
+    print_bar_color(CYAN);
     print_header("PLU: HIGH-PERFORMANCE CONCURRENT PDF PIPELINE");
-    print_bar();
+    print_bar_color(CYAN);
     print_kv("Input PDF", &load_path.display().to_string());
 
     let overall_start = Instant::now();
@@ -110,7 +113,12 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     let doc_meta = loader.metadata().clone();
     let loader_init_time = loader_start.elapsed();
 
-    print_kv("Discovered Pages", &format!("{} (in {:.2?})", total_pages, loader_init_time));
+    print_kv_colored(
+        "Discovered Pages",
+        &format!("{} (in {:.2?})", total_pages, loader_init_time),
+        YELLOW,
+        BRIGHT_GREEN,
+    );
     if let Some(ref title) = doc_meta.title {
         print_kv("Document Title", title);
     }
@@ -138,7 +146,7 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
         .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
     print_kv("Worker Threads", &effective_threads.to_string());
     print_kv("Unloader Thread", "1 (Dedicated OS Thread)");
-    print_bar();
+    print_bar_color(CYAN);
 
     let stats = if let Some(single_page) = args.page {
         // Single page extraction mode
@@ -183,20 +191,21 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
         stats.pages_processed as f64
     };
 
-    print_bar();
-    print_header("PIPELINE COMPLETED SUCCESSFULLY");
-    print_bar();
+    println!();
+    print_bar_color(BRIGHT_GREEN);
+    print_header_color("PIPELINE COMPLETED SUCCESSFULLY", BRIGHT_GREEN, BRIGHT_GREEN);
+    print_bar_color(BRIGHT_GREEN);
     print_kv("Output File", &unload_path.display().to_string());
-    print_kv("Pages Processed", &stats.pages_processed.to_string());
+    print_kv_colored("Pages Processed", &stats.pages_processed.to_string(), YELLOW, BRIGHT_GREEN);
     print_kv("Total Chars", &stats.total_chars.to_string());
     print_kv("Total Words", &stats.total_words.to_string());
     print_kv(
         "Payload Size",
         &format!("{:.2} KB ({} bytes)", stats.bytes_written as f64 / 1024.0, stats.bytes_written),
     );
-    print_kv("Throughput", &format!("{:.1} pages/sec", pps));
-    print_kv("Total Elapsed", &format!("{:.2?}", total_elapsed));
-    print_bar();
+    print_kv_colored("Throughput", &format!("{:.1} pages/sec", pps), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Total Elapsed", &format!("{:.2?}", total_elapsed), YELLOW, BRIGHT_GREEN);
+    print_bar_color(BRIGHT_GREEN);
 
     Ok(())
 }
@@ -204,9 +213,9 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
 /// Handles unloading / inspecting an existing .plu container
 fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
     println!();
-    print_bar();
+    print_bar_color(CYAN);
     print_header("PLU UNLOADER: READING CONTAINER");
-    print_bar();
+    print_bar_color(CYAN);
     print_kv("Reading File", &plu_path.display().to_string());
 
     let start = Instant::now();
@@ -214,15 +223,16 @@ fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
     // Check if unpacking to a directory was requested
     if let Some(ref out_dir) = args.unpack {
         print_kv("Unpack Target", &out_dir.display().to_string());
-        print_bar();
+        print_bar_color(CYAN);
         let count = PdfUnloader::unpack_to_directory(plu_path, out_dir)?;
-        print_bar();
-        print_header("UNPACK COMPLETED");
-        print_bar();
-        print_kv("Unpacked Pages", &count.to_string());
+        println!();
+        print_bar_color(BRIGHT_GREEN);
+        print_header_color("UNPACK COMPLETED", BRIGHT_GREEN, BRIGHT_GREEN);
+        print_bar_color(BRIGHT_GREEN);
+        print_kv_colored("Unpacked Pages", &count.to_string(), YELLOW, BRIGHT_GREEN);
         print_kv("Destination", &out_dir.display().to_string());
-        print_kv("Elapsed Time", &format!("{:.2?}", start.elapsed()));
-        print_bar();
+        print_kv_colored("Elapsed Time", &format!("{:.2?}", start.elapsed()), YELLOW, BRIGHT_GREEN);
+        print_bar_color(BRIGHT_GREEN);
         return Ok(());
     }
 
@@ -230,18 +240,23 @@ fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
     if let Some(page_num) = args.page {
         let page = PdfUnloader::unload_single_page(plu_path, page_num)?;
         let elapsed = start.elapsed();
-        print_bar();
-        print_header(&format!("PAGE {} CONTENT (O(1) LOOKUP)", page.page_num));
-        print_bar();
+        println!();
+        print_bar_color(BRIGHT_GREEN);
+        print_header_color(
+            &format!("PAGE {} CONTENT (O(1) LOOKUP)", page.page_num),
+            BRIGHT_GREEN,
+            BRIGHT_GREEN,
+        );
+        print_bar_color(BRIGHT_GREEN);
         print_kv("Dimensions", &format!("{}x{} pt", page.width, page.height));
         print_kv("Characters", &page.char_count.to_string());
         print_kv("Words", &page.word_count.to_string());
-        print_kv("Lookup Time", &format!("{:.2?}", elapsed));
-        print_bar();
+        print_kv_colored("Lookup Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+        print_bar_color(CYAN);
         for line in page.text.lines() {
             print_row(line);
         }
-        print_bar();
+        print_bar_color(CYAN);
         return Ok(());
     }
 
@@ -249,9 +264,10 @@ fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
     let doc = PdfUnloader::unload_file(plu_path)?;
     let elapsed = start.elapsed();
 
-    print_bar();
-    print_header("CONTAINER VERIFIED AND LOADED");
-    print_bar();
+    println!();
+    print_bar_color(BRIGHT_GREEN);
+    print_header_color("CONTAINER VERIFIED AND LOADED", BRIGHT_GREEN, BRIGHT_GREEN);
+    print_bar_color(BRIGHT_GREEN);
     print_kv("Source PDF", &doc.meta.source_path);
     if let Some(ref title) = doc.meta.title {
         print_kv("Title", title);
@@ -262,13 +278,14 @@ fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
     print_kv("Total Pages", &doc.meta.page_count.to_string());
     print_kv("Total Characters", &doc.meta.total_chars.to_string());
     print_kv("Total Words", &doc.meta.total_words.to_string());
-    print_kv("Verification Time", &format!("{:.2?}", elapsed));
-    print_bar();
+    print_kv_colored("Verification Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+    print_bar_color(BRIGHT_GREEN);
 
     if args.verbose {
-        print_bar();
+        println!();
+        print_bar_color(CYAN);
         print_header("PAGE INVENTORY");
-        print_bar();
+        print_bar_color(CYAN);
         for p in &doc.pages {
             let row = format!(
                 "Page {:>4} | {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
@@ -276,10 +293,14 @@ fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
             );
             print_row(&row);
         }
-        print_bar();
+        print_bar_color(CYAN);
     } else {
-        print_row("Tip: Use `--verbose` for full inventory, or `--page <N>` for single page.");
-        print_bar();
+        print_bar_color(CYAN);
+        print_row_color(
+            "Tip: Use `--verbose` for full inventory, or `--page <N>` for single page.",
+            YELLOW,
+        );
+        print_bar_color(CYAN);
     }
 
     Ok(())
