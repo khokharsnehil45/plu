@@ -37,6 +37,29 @@ cargo install --git https://github.com/khokharsnehil45/plu.git --force
 
 ---
 
+## 🖥️ Interactive CLI UI
+
+Run `plu` with no arguments or pass `--ui` to launch the minimalist interactive menu styled purely with `=` and `|`:
+
+```bash
+plu --ui
+```
+
+```
+==============================================================================
+|                 PLU: PDF LOADER & UNLOADER INTERACTIVE UI                  |
+==============================================================================
+| [1] Load PDF & Dump (Concurrent Page-by-Page Extraction)                    |
+| [2] Unload & Inspect .plu Container File                                    |
+| [3] Read Single Page from .plu (O(1) Random Access)                         |
+| [4] Unpack .plu Pages to Directory                                          |
+| [5] Exit                                                                    |
+==============================================================================
+| Select an option [1-5]:
+```
+
+---
+
 ## 🚀 Quick Start
 
 ### 1. Load and Dump PDF

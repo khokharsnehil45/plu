@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use plu::loader::PdfLoader;
 use plu::types::{DumpFormat, PageData, PluDocument};
+use plu::ui::{print_bar, print_header, print_kv, print_row, run_interactive_ui};
 use plu::unloader::PdfUnloader;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -41,18 +42,29 @@ struct Args {
     /// Verbose output with detailed page breakdown
     #[arg(short = 'v', long = "verbose")]
     verbose: bool,
+
+    /// Launch interactive terminal UI
+    #[arg(long = "ui")]
+    ui: bool,
 }
 
 fn main() {
     let args = Args::parse();
 
     if let Err(err) = run(args) {
-        eprintln!("\x1b[1;31m[ERROR]\x1b[0m {err:#}");
+        println!();
+        print_bar();
+        print_row(&format!("ERROR: {err:#}"));
+        print_bar();
         std::process::exit(1);
     }
 }
 
 fn run(args: Args) -> Result<()> {
+    if args.ui {
+        return run_interactive_ui();
+    }
+
     match (&args.load, &args.unload) {
         // Case 1: Both --load and --unload provided:
         // plu --load input.pdf --unload output.plu (or output.txt, output.json)
@@ -67,10 +79,6 @@ fn run(args: Args) -> Result<()> {
                 .file_stem()
                 .map(|s| PathBuf::from(format!("{}.plu", s.to_string_lossy())))
                 .unwrap_or_else(|| PathBuf::from("plu"));
-            println!(
-                "\x1b[1;33m[INFO]\x1b[0m No --unload path specified. Defaulting to: \x1b[1m{}\x1b[0m",
-                default_unload.display()
-            );
             handle_load_and_unload(load_path, &default_unload, &args)
         }
 
@@ -78,26 +86,18 @@ fn run(args: Args) -> Result<()> {
         // Unload an existing .plu dump file (inspect, unpack, or display)
         (None, Some(unload_path)) => handle_unload_only(unload_path, &args),
 
-        // Case 4: Neither provided
-        (None, None) => {
-            eprintln!("\x1b[1;31m[ERROR]\x1b[0m Missing arguments.");
-            eprintln!("Usage examples:");
-            eprintln!("  plu --load document.pdf --unload document.plu");
-            eprintln!("  plu --load document.pdf --unload output.txt");
-            eprintln!("  plu --unload document.plu");
-            eprintln!("  plu --unload document.plu --unpack ./extracted_pages");
-            eprintln!("Run `plu --help` for full usage documentation.");
-            std::process::exit(1);
-        }
+        // Case 4: Neither provided -> Launch interactive CLI UI
+        (None, None) => run_interactive_ui(),
     }
 }
 
 /// Executes the concurrent loader -> unloader streaming pipeline
 fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> Result<()> {
-    println!("\x1b[1;36m========================================================\x1b[0m");
-    println!("\x1b[1;36m  PLU: High-Performance Concurrent PDF Pipeline\x1b[0m");
-    println!("\x1b[1;36m========================================================\x1b[0m");
-    println!("[Loader] Loading PDF: \x1b[1m{}\x1b[0m", load_path.display());
+    println!();
+    print_bar();
+    print_header("PLU: HIGH-PERFORMANCE CONCURRENT PDF PIPELINE");
+    print_bar();
+    print_kv("Input PDF", &load_path.display().to_string());
 
     let overall_start = Instant::now();
 
@@ -110,15 +110,12 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     let doc_meta = loader.metadata().clone();
     let loader_init_time = loader_start.elapsed();
 
-    println!(
-        "[Loader] Discovered \x1b[1;32m{} pages\x1b[0m in {:.2?}",
-        total_pages, loader_init_time
-    );
+    print_kv("Discovered Pages", &format!("{} (in {:.2?})", total_pages, loader_init_time));
     if let Some(ref title) = doc_meta.title {
-        println!("[Loader] Document Title: {title}");
+        print_kv("Document Title", title);
     }
     if let Some(ref author) = doc_meta.author {
-        println!("[Loader] Document Author: {author}");
+        print_kv("Document Author", author);
     }
 
     let dump_format = if let Some(ref fmt) = args.format {
@@ -133,15 +130,22 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
         PdfUnloader::detect_format(unload_path)
     };
 
-    println!("[Unloader] Target Format: \x1b[1;35m{}\x1b[0m", dump_format);
-    println!("[Unloader] Target File  : \x1b[1m{}\x1b[0m", unload_path.display());
+    print_kv("Target Format", &dump_format.to_string());
+    print_kv("Target File", &unload_path.display().to_string());
+
+    let effective_threads = args
+        .threads
+        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
+    print_kv("Worker Threads", &effective_threads.to_string());
+    print_kv("Unloader Thread", "1 (Dedicated OS Thread)");
+    print_bar();
 
     let stats = if let Some(single_page) = args.page {
         // Single page extraction mode
         if single_page < 1 || single_page > total_pages {
             bail!("Requested page {single_page} is out of range (1..={total_pages})");
         }
-        println!("[Loader] Extracting single page: {}", single_page);
+        print_row(&format!("Extracting single page: {}", single_page));
         let page = loader.extract_page(single_page)?;
         let doc = PluDocument::new(
             loader.source_path().to_string_lossy().to_string(),
@@ -151,26 +155,13 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
         );
         PdfUnloader::dump_with_format(&doc, unload_path, dump_format)?
     } else {
-        // Multi-threaded concurrent streaming mode:
-        // - Loader thread pool extracts pages concurrently across all CPU cores
-        // - Bounded channel streams finished pages in real time
-        // - Unloader thread actively writes/dumps to disk overlapping I/O and CPU
-        let effective_threads = args
-            .threads
-            .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
-
-        println!(
-            "[Pipeline] Starting concurrent execution (Worker Threads: {}, Dedicated Unloader Thread: 1)...",
-            effective_threads
-        );
-
+        // Multi-threaded concurrent streaming mode
         let channel_cap = (effective_threads * 4).max(32);
         let (tx, rx) = crossbeam_channel::bounded::<PageData>(channel_cap);
 
         let unloader_path = unload_path.to_path_buf();
         let unloader_meta = doc_meta.clone();
 
-        // Spawn Unloader on dedicated thread
         let unloader_handle = std::thread::Builder::new()
             .name("unloader".to_string())
             .spawn(move || {
@@ -178,10 +169,8 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
             })
             .context("Failed to spawn Unloader thread")?;
 
-        // Parallel extraction on Rayon worker pool
         loader.stream_pages_parallel(tx, args.threads)?;
 
-        // Wait for Unloader to flush and finish
         unloader_handle
             .join()
             .map_err(|_| anyhow::anyhow!("Unloader thread panicked"))??
@@ -194,58 +183,65 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
         stats.pages_processed as f64
     };
 
-    println!("\x1b[1;32m========================================================\x1b[0m");
-    println!("\x1b[1;32m  PLU Pipeline Complete Successfully!\x1b[0m");
-    println!("\x1b[1;32m========================================================\x1b[0m");
-    println!("  Output File     : {}", unload_path.display());
-    println!("  Pages Processed : {}", stats.pages_processed);
-    println!("  Total Chars     : {}", stats.total_chars);
-    println!("  Total Words     : {}", stats.total_words);
-    println!(
-        "  Payload Size    : {:.2} KB ({} bytes)",
-        stats.bytes_written as f64 / 1024.0,
-        stats.bytes_written
+    print_bar();
+    print_header("PIPELINE COMPLETED SUCCESSFULLY");
+    print_bar();
+    print_kv("Output File", &unload_path.display().to_string());
+    print_kv("Pages Processed", &stats.pages_processed.to_string());
+    print_kv("Total Chars", &stats.total_chars.to_string());
+    print_kv("Total Words", &stats.total_words.to_string());
+    print_kv(
+        "Payload Size",
+        &format!("{:.2} KB ({} bytes)", stats.bytes_written as f64 / 1024.0, stats.bytes_written),
     );
-    println!("  Throughput      : \x1b[1;32m{:.1} pages/sec\x1b[0m", pps);
-    println!("  Total Time      : \x1b[1m{:.2?}\x1b[0m", total_elapsed);
-    println!("\x1b[1;32m========================================================\x1b[0m");
+    print_kv("Throughput", &format!("{:.1} pages/sec", pps));
+    print_kv("Total Elapsed", &format!("{:.2?}", total_elapsed));
+    print_bar();
 
     Ok(())
 }
 
 /// Handles unloading / inspecting an existing .plu container
 fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
-    println!("\x1b[1;36m========================================================\x1b[0m");
-    println!("\x1b[1;36m  PLU Unloader: Reading Container\x1b[0m");
-    println!("\x1b[1;36m========================================================\x1b[0m");
-    println!("[Unloader] Reading: \x1b[1m{}\x1b[0m", plu_path.display());
+    println!();
+    print_bar();
+    print_header("PLU UNLOADER: READING CONTAINER");
+    print_bar();
+    print_kv("Reading File", &plu_path.display().to_string());
 
     let start = Instant::now();
 
     // Check if unpacking to a directory was requested
     if let Some(ref out_dir) = args.unpack {
-        println!("[Unloader] Unpacking pages into: \x1b[1m{}\x1b[0m", out_dir.display());
+        print_kv("Unpack Target", &out_dir.display().to_string());
+        print_bar();
         let count = PdfUnloader::unpack_to_directory(plu_path, out_dir)?;
-        println!(
-            "\x1b[1;32m[Unloader] Successfully unpacked {} pages into {} in {:.2?}\x1b[0m",
-            count,
-            out_dir.display(),
-            start.elapsed()
-        );
+        print_bar();
+        print_header("UNPACK COMPLETED");
+        print_bar();
+        print_kv("Unpacked Pages", &count.to_string());
+        print_kv("Destination", &out_dir.display().to_string());
+        print_kv("Elapsed Time", &format!("{:.2?}", start.elapsed()));
+        print_bar();
         return Ok(());
     }
 
     // Check if a single page was requested
     if let Some(page_num) = args.page {
-        println!("[Unloader] Fast O(1) random access lookup for Page {}", page_num);
         let page = PdfUnloader::unload_single_page(plu_path, page_num)?;
         let elapsed = start.elapsed();
-        println!(
-            "\x1b[1;32m[Unloader] Loaded Page {} in {:.2?}\x1b[0m ({}x{} pt, {} chars, {} words)",
-            page.page_num, elapsed, page.width, page.height, page.char_count, page.word_count
-        );
-        println!("\n--- Page {} Content ---", page.page_num);
-        println!("{}", page.text.trim());
+        print_bar();
+        print_header(&format!("PAGE {} CONTENT (O(1) LOOKUP)", page.page_num));
+        print_bar();
+        print_kv("Dimensions", &format!("{}x{} pt", page.width, page.height));
+        print_kv("Characters", &page.char_count.to_string());
+        print_kv("Words", &page.word_count.to_string());
+        print_kv("Lookup Time", &format!("{:.2?}", elapsed));
+        print_bar();
+        for line in page.text.lines() {
+            print_row(line);
+        }
+        print_bar();
         return Ok(());
     }
 
@@ -253,28 +249,37 @@ fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
     let doc = PdfUnloader::unload_file(plu_path)?;
     let elapsed = start.elapsed();
 
-    println!("\x1b[1;32m[Unloader] Verified and loaded container in {:.2?}\x1b[0m", elapsed);
-    println!("  Source PDF      : {}", doc.meta.source_path);
+    print_bar();
+    print_header("CONTAINER VERIFIED AND LOADED");
+    print_bar();
+    print_kv("Source PDF", &doc.meta.source_path);
     if let Some(ref title) = doc.meta.title {
-        println!("  Title           : {title}");
+        print_kv("Title", title);
     }
     if let Some(ref author) = doc.meta.author {
-        println!("  Author          : {author}");
+        print_kv("Author", author);
     }
-    println!("  Total Pages     : {}", doc.meta.page_count);
-    println!("  Total Characters: {}", doc.meta.total_chars);
-    println!("  Total Words     : {}", doc.meta.total_words);
+    print_kv("Total Pages", &doc.meta.page_count.to_string());
+    print_kv("Total Characters", &doc.meta.total_chars.to_string());
+    print_kv("Total Words", &doc.meta.total_words.to_string());
+    print_kv("Verification Time", &format!("{:.2?}", elapsed));
+    print_bar();
 
     if args.verbose {
-        println!("\n[Unloader] Page Inventory:");
+        print_bar();
+        print_header("PAGE INVENTORY");
+        print_bar();
         for p in &doc.pages {
-            println!(
-                "  • Page {:>4}: {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
+            let row = format!(
+                "Page {:>4} | {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
                 p.page_num, p.width, p.height, p.char_count, p.word_count
             );
+            print_row(&row);
         }
+        print_bar();
     } else {
-        println!("\n[Tip] Use `--verbose` to view per-page metrics, `--page <N>` to inspect a page, or `--unpack <DIR>` to extract all pages to disk.");
+        print_row("Tip: Use `--verbose` for full inventory, or `--page <N>` for single page.");
+        print_bar();
     }
 
     Ok(())
