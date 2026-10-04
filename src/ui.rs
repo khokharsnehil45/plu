@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use crate::batch::{self, print_batch_summary};
 use crate::loader::PdfLoader;
+use crate::types::DumpFormat;
 use crate::unloader::PdfUnloader;
 
 // ANSI Color Escape Sequences
@@ -29,7 +30,7 @@ pub fn print_banner() {
     println!("{BRIGHT_CYAN}PLU{RESET} {YELLOW}v1.0.0{RESET} {BRIGHT_MAGENTA}•{RESET} {BRIGHT_WHITE}PDF Loader & Unloader{RESET}");
     println!("{CYAN}{}{RESET}", DIVIDER);
     println!(" {BRIGHT_GREEN}Welcome to PLU Engine!{RESET}");
-    println!(" {BRIGHT_WHITE}Ready to load PDF content and unload .txt files page by page.{RESET}");
+    println!(" {BRIGHT_WHITE}Ready to load PDF content and unload .md / .txt / .json / .plu files.{RESET}");
     println!("{CYAN}{}{RESET}", DIVIDER);
 }
 
@@ -69,7 +70,7 @@ pub fn run_interactive_ui() -> Result<()> {
     loop {
         println!();
         print_banner();
-        print_menu_item("1", "Load & Unload PDF", "Extract page-by-page & unload into .txt (Single / Batch)");
+        print_menu_item("1", "Load & Unload PDF", "Extract page-by-page & unload into .md, .txt, .json, .plu");
         print_menu_item("2", "Exit", "Quit PLU Engine");
         print_divider();
         print!(" {BRIGHT_MAGENTA}Select an option [1-2]:{RESET} ");
@@ -129,6 +130,23 @@ fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
         return Ok(());
     }
 
+    println!();
+    print_divider();
+    println!(" {BRIGHT_WHITE}Select Unload Format:{RESET}");
+    print_menu_item("1", "Markdown (.md)", "Clean Markdown with YAML frontmatter & headers (Default)");
+    print_menu_item("2", "Plain Text (.txt)", "Standard plain text with page headers");
+    print_menu_item("3", "JSON (.json)", "Structured JSON document format");
+    print_menu_item("4", "PLU Binary (.plu)", "High-performance compressed binary container");
+    print_divider();
+    let fmt_choice = prompt_input(reader, "Choose format [1-4, default: 1]:")?;
+    let chosen_format = match fmt_choice.trim() {
+        "2" | "txt" => DumpFormat::Text,
+        "3" | "json" => DumpFormat::Json,
+        "4" | "plu" => DumpFormat::Plu,
+        _ => DumpFormat::Markdown,
+    };
+    let ext = chosen_format.extension();
+
     let threads_input = prompt_input(reader, "Enter worker threads [Enter for auto]:")?;
     let threads: Option<usize> = threads_input.parse().ok();
 
@@ -136,8 +154,8 @@ fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
         // Batch Load & Unload Directory
         let default_out = input_path
             .file_name()
-            .map(|s| format!("{}_txt", s.to_string_lossy()))
-            .unwrap_or_else(|| "batch_txt_output".to_string());
+            .map(|s| format!("{}_{}", s.to_string_lossy(), ext))
+            .unwrap_or_else(|| format!("batch_{}_output", ext));
 
         let out_prompt = format!("Enter unload output directory [default: {}]:", default_out);
         let out_str = prompt_input(reader, &out_prompt)?;
@@ -153,9 +171,10 @@ fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
         print_divider();
         print_kv("Input Directory", &input_path.display().to_string());
         print_kv("Unload Output Dir", &output_dir.display().to_string());
+        print_kv("Target Format", &chosen_format.to_string());
         print_divider();
 
-        match batch::run_batch_load(&input_path, &output_dir, threads, crate::types::DumpFormat::Text) {
+        match batch::run_batch_load(&input_path, &output_dir, threads, chosen_format) {
             Ok(stats) => {
                 print_batch_summary(&stats, "LOAD & UNLOAD", &output_dir);
             }
@@ -167,15 +186,15 @@ fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
         // Single File Load & Unload
         let default_output = input_path
             .file_stem()
-            .map(|s| format!("{}.txt", s.to_string_lossy()))
-            .unwrap_or_else(|| "output.txt".to_string());
+            .map(|s| format!("{}.{}", s.to_string_lossy(), ext))
+            .unwrap_or_else(|| format!("output.{}", ext));
 
         let out_prompt = format!("Enter unload destination path [default: {}]:", default_output);
         let out_input = prompt_input(reader, &out_prompt)?;
         let output_path = if out_input.is_empty() {
             input_path.parent().unwrap_or(&input_path).join(default_output)
         } else {
-            PathBuf::from(out_input)
+            PathBuf::from(&out_input)
         };
 
         println!();
@@ -196,7 +215,11 @@ fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
 
         let total_pages = loader.page_count();
         let meta = loader.metadata().clone();
-        let format = PdfUnloader::detect_format(&output_path);
+        let format = if out_input.is_empty() {
+            chosen_format
+        } else {
+            PdfUnloader::detect_format(&output_path)
+        };
 
         print_kv("Target Format", &format.to_string());
         print_kv("Discovered Pages", &total_pages.to_string());

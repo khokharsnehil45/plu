@@ -36,7 +36,7 @@ struct Args {
     #[arg(short = 't', long = "threads", value_name = "N")]
     threads: Option<usize>,
 
-    /// Force output format when dumping (txt, plu, json, jsonl)
+    /// Force output format when dumping (md, txt, plu, json, jsonl)
     #[arg(short = 'f', long = "format", value_name = "FORMAT")]
     format: Option<String>,
 
@@ -95,14 +95,15 @@ fn run(args: Args) -> Result<()> {
             }
         }
 
-        // Case 2: Only --load provided (defaults unload target to <stem>.txt or <dir>_txt):
+        // Case 2: Only --load provided (defaults unload target based on format, e.g. <stem>.md or <dir>_md):
         (Some(load_path), None) => {
+            let fmt = parse_format(args.format.as_deref())?;
+            let ext = fmt.extension();
             if load_path.is_dir() || args.batch {
                 let default_out = load_path
                     .parent()
                     .unwrap_or(load_path)
-                    .join(format!("{}_txt", load_path.file_name().unwrap().to_string_lossy()));
-                let fmt = parse_format(args.format.as_deref())?;
+                    .join(format!("{}_{}", load_path.file_name().unwrap().to_string_lossy(), ext));
                 let stats = batch::run_batch_load_with_ocr(
                     load_path,
                     &default_out,
@@ -116,8 +117,8 @@ fn run(args: Args) -> Result<()> {
             } else {
                 let default_unload = load_path
                     .file_stem()
-                    .map(|s| PathBuf::from(format!("{}.txt", s.to_string_lossy())))
-                    .unwrap_or_else(|| PathBuf::from("output.txt"));
+                    .map(|s| PathBuf::from(format!("{}.{}", s.to_string_lossy(), ext)))
+                    .unwrap_or_else(|| PathBuf::from(format!("output.{}", ext)));
                 handle_load_and_unload(load_path, &default_unload, &args)
             }
         }
@@ -135,11 +136,12 @@ fn run(args: Args) -> Result<()> {
 fn parse_format(fmt: Option<&str>) -> Result<DumpFormat> {
     if let Some(f) = fmt {
         match f.to_ascii_lowercase().as_str() {
-            "txt" => Ok(DumpFormat::Text),
+            "md" | "markdown" => Ok(DumpFormat::Markdown),
+            "txt" | "text" => Ok(DumpFormat::Text),
             "plu" => Ok(DumpFormat::Plu),
             "json" => Ok(DumpFormat::Json),
             "jsonl" => Ok(DumpFormat::JsonLines),
-            other => bail!("Unknown format: '{other}'. Choose from: txt, plu, json, jsonl"),
+            other => bail!("Unknown format: '{other}'. Choose from: md, txt, plu, json, jsonl"),
         }
     } else {
         Ok(DumpFormat::Text)

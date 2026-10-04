@@ -107,12 +107,7 @@ pub fn run_batch_load_with_ocr(
     fs::create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output directory: {}", output_dir.display()))?;
 
-    let ext = match format {
-        DumpFormat::Plu => "plu",
-        DumpFormat::Text => "txt",
-        DumpFormat::Json => "json",
-        DumpFormat::JsonLines => "jsonl",
-    };
+    let ext = format.extension();
 
     let mp = MultiProgress::new();
     let file_pb = mp.add(create_batch_file_progress_bar(

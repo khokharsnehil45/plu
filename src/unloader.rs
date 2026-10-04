@@ -17,6 +17,7 @@ impl PdfUnloader {
     /// Detects format from file extension or defaults to .txt format.
     pub fn detect_format(path: &Path) -> DumpFormat {
         match path.extension().and_then(|ext| ext.to_str()).map(|s| s.to_ascii_lowercase()) {
+            Some(ref s) if s == "md" || s == "markdown" => DumpFormat::Markdown,
             Some(ref s) if s == "plu" => DumpFormat::Plu,
             Some(ref s) if s == "json" => DumpFormat::Json,
             Some(ref s) if s == "jsonl" => DumpFormat::JsonLines,
@@ -105,6 +106,39 @@ impl PdfUnloader {
                     writer.write_all(line.as_bytes())?;
                     writer.write_all(b"\n")?;
                     total_bytes += (line.len() + 1) as u64;
+                }
+                writer.flush()?;
+                total_bytes
+            }
+            DumpFormat::Markdown => {
+                let file = File::create(path)
+                    .with_context(|| format!("Failed to create output markdown file: {}", path.display()))?;
+                let mut writer = BufWriter::with_capacity(128 * 1024, file);
+                let mut total_bytes = 0u64;
+
+                let title_val = doc.meta.title.as_deref().unwrap_or("Untitled Document");
+                let mut frontmatter = format!(
+                    "---\nsource: {:?}\ntitle: {:?}\n",
+                    doc.meta.source_path, title_val
+                );
+                if let Some(ref author) = doc.meta.author {
+                    frontmatter.push_str(&format!("author: {:?}\n", author));
+                }
+                frontmatter.push_str(&format!(
+                    "total_pages: {}\ntotal_chars: {}\ntotal_words: {}\ngenerator: PLU v1.0.0\n---\n\n",
+                    doc.meta.page_count, doc.meta.total_chars, doc.meta.total_words
+                ));
+
+                writer.write_all(frontmatter.as_bytes())?;
+                total_bytes += frontmatter.len() as u64;
+
+                for page in &doc.pages {
+                    let page_block = format!(
+                        "# Page {}\n\n> **Dimensions:** {:.1} × {:.1} pt | **Characters:** {} | **Words:** {}\n\n{}\n\n---\n\n",
+                        page.page_num, page.width, page.height, page.char_count, page.word_count, page.text
+                    );
+                    writer.write_all(page_block.as_bytes())?;
+                    total_bytes += page_block.len() as u64;
                 }
                 writer.flush()?;
                 total_bytes
@@ -243,6 +277,63 @@ impl PdfUnloader {
                     writer.write_all(ready_page.text.as_bytes())?;
                     writer.write_all(b"\n\n")?;
                     total_bytes += (page_hdr.len() + ready_page.text.len() + 2) as u64;
+                    if let Some(ref pb) = progress {
+                        pb.inc(1);
+                    }
+                }
+
+                writer.flush()?;
+                total_bytes
+            }
+            DumpFormat::Markdown => {
+                let mut total_bytes = 0u64;
+                let title_val = meta.title.as_deref().unwrap_or("Untitled Document");
+                let mut frontmatter = format!(
+                    "---\nsource: {:?}\ntitle: {:?}\n",
+                    meta.source_path, title_val
+                );
+                if let Some(ref author) = meta.author {
+                    frontmatter.push_str(&format!("author: {:?}\n", author));
+                }
+                frontmatter.push_str(&format!(
+                    "total_pages: {}\ngenerator: PLU v1.0.0\n---\n\n",
+                    page_count
+                ));
+
+                writer.write_all(frontmatter.as_bytes())?;
+                total_bytes += frontmatter.len() as u64;
+
+                while let Ok(page) = receiver.recv() {
+                    reorder_buffer.insert(page.page_num, page);
+                    while let Some(ready_page) = reorder_buffer.remove(&next_expected) {
+                        total_chars += ready_page.char_count;
+                        total_words += ready_page.word_count;
+                        pages_processed += 1;
+
+                        let page_block = format!(
+                            "# Page {}\n\n> **Dimensions:** {:.1} × {:.1} pt | **Characters:** {} | **Words:** {}\n\n{}\n\n---\n\n",
+                            ready_page.page_num, ready_page.width, ready_page.height, ready_page.char_count, ready_page.word_count, ready_page.text
+                        );
+                        writer.write_all(page_block.as_bytes())?;
+                        total_bytes += page_block.len() as u64;
+                        next_expected += 1;
+                        if let Some(ref pb) = progress {
+                            pb.inc(1);
+                        }
+                    }
+                }
+
+                while let Some((_, ready_page)) = reorder_buffer.pop_first() {
+                    total_chars += ready_page.char_count;
+                    total_words += ready_page.word_count;
+                    pages_processed += 1;
+
+                    let page_block = format!(
+                        "# Page {}\n\n> **Dimensions:** {:.1} × {:.1} pt | **Characters:** {} | **Words:** {}\n\n{}\n\n---\n\n",
+                        ready_page.page_num, ready_page.width, ready_page.height, ready_page.char_count, ready_page.word_count, ready_page.text
+                    );
+                    writer.write_all(page_block.as_bytes())?;
+                    total_bytes += page_block.len() as u64;
                     if let Some(ref pb) = progress {
                         pb.inc(1);
                     }

@@ -51,33 +51,41 @@ plu --ui
 PLU v1.0.0 • PDF Loader & Unloader
 ────────────────────────────────────────────────────────────
  Welcome to PLU Engine!
- Ready to load PDF content and unload .plu files page by page.
+ Ready to load PDF content and unload .md / .txt / .json / .plu files.
 ────────────────────────────────────────────────────────────
- [1] Load & Unload PDF   Extract page-by-page & unload into .plu (Single / Batch)
+ [1] Load & Unload PDF   Extract page-by-page & unload into .md, .txt, .json, .plu
  [2] Exit                Quit PLU Engine
 ────────────────────────────────────────────────────────────
  Select an option [1-2]: 
 ```
 
+When you choose **[1] Load & Unload PDF**, you can pick your preferred unload format directly:
+- **`[1] Markdown (.md)`**: Clean Markdown with YAML frontmatter, `# Page N` headers, and page metadata blockquotes.
+- **`[2] Plain Text (.txt)`**: Standard UTF-8 plain text with page headers.
+- **`[3] JSON (.json)`**: Complete structured JSON document.
+- **`[4] PLU Binary (.plu)`**: High-performance compressed binary container with index tables and CRC32 checks.
+
 ---
 
 ## 🚀 Unified Pipeline: Load & Unload
 
-PLU is engineered around a single unified pipeline holding **Load** and **Unload** together. The Loader extracts PDF content page-by-page concurrently across multi-core CPUs, and the Unloader writes it directly into clean formatted text:
+PLU is engineered around a single unified pipeline holding **Load** and **Unload** together. The Loader extracts PDF content page-by-page concurrently across multi-core CPUs, and the Unloader writes it directly into your chosen format:
 
+### Markdown (`.md`)
 ```bash
-# Load PDF and unload into output text file
-plu --load document.pdf --unload document.txt
+# Dump into clean Markdown with YAML frontmatter
+plu --load document.pdf --unload document.md
 
-# Defaults unload destination to <file_stem>.txt
-plu --load document.pdf
+# Or specify format flag (defaults to <file_stem>.md)
+plu --load document.pdf -f md
 ```
 
-Target alternative output formats on dump:
+### Other Formats (`.txt`, `.plu`, `.json`, `.jsonl`)
 ```bash
-plu --load document.pdf --unload document.plu     # High-speed binary container
-plu --load document.pdf --unload document.json    # Structured JSON document
-plu --load document.pdf --unload document.jsonl   # Streaming JSON Lines (one line per page)
+plu --load document.pdf --unload document.txt    # Plain text
+plu --load document.pdf --unload document.plu    # High-speed binary container
+plu --load document.pdf --unload document.json   # Structured JSON document
+plu --load document.pdf --unload document.jsonl  # Streaming JSON Lines (one line per page)
 ```
 
 ---
@@ -254,7 +262,7 @@ Options:
   -u, --unload <PATH>      Path to file/directory to unload/dump to (default: <stem>.txt or <dir>_txt)
   -b, --batch              Explicitly enable batch processing mode
   -t, --threads <N>        Number of worker threads for parallel extraction (default: CPU cores)
-  -f, --format <FORMAT>    Force output format when dumping (txt, plu, json, jsonl)
+  -f, --format <FORMAT>    Force output format when dumping (md, txt, plu, json, jsonl)
       --no-ocr             Disable automatic OCR fallback for scanned images
       --ocr-lang <LANG>    Language code for Tesseract OCR (default: eng)
       --ui                 Launch interactive terminal UI

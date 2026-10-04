@@ -169,3 +169,43 @@ fn test_ocr_detection_and_availability() {
     }
 }
 
+#[test]
+fn test_markdown_dump_and_detection() {
+    assert_eq!(PdfUnloader::detect_format(std::path::Path::new("output.md")), DumpFormat::Markdown);
+    assert_eq!(PdfUnloader::detect_format(std::path::Path::new("output.markdown")), DumpFormat::Markdown);
+    assert_eq!(DumpFormat::Markdown.extension(), "md");
+
+    let pages = vec![
+        PageData::new(1, 612.0, 792.0, "First page text content.".to_string()),
+        PageData::new(2, 612.0, 792.0, "Second page text content.".to_string()),
+    ];
+
+    let doc = PluDocument::new(
+        "/test/source.pdf".to_string(),
+        Some("Test MD Document".to_string()),
+        Some("Author Name".to_string()),
+        pages,
+    );
+
+    let dir = tempdir().unwrap();
+    let md_path = dir.path().join("test.md");
+
+    let stats = PdfUnloader::dump_with_format(&doc, &md_path, DumpFormat::Markdown).expect("MD dump failed");
+    assert_eq!(stats.pages_processed, 2);
+    assert!(md_path.exists());
+
+    let content = std::fs::read_to_string(&md_path).expect("Failed to read md file");
+    assert!(content.starts_with("---\n"));
+    assert!(content.contains("source: \"/test/source.pdf\""));
+    assert!(content.contains("title: \"Test MD Document\""));
+    assert!(content.contains("author: \"Author Name\""));
+    assert!(content.contains("total_pages: 2"));
+    assert!(content.contains("generator: PLU v1.0.0"));
+    assert!(content.contains("# Page 1"));
+    assert!(content.contains("> **Dimensions:** 612.0 × 792.0 pt | **Characters:** 24 | **Words:** 4"));
+    assert!(content.contains("First page text content."));
+    assert!(content.contains("# Page 2"));
+    assert!(content.contains("Second page text content."));
+}
+
+

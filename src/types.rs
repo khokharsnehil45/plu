@@ -74,23 +74,39 @@ impl PluDocument {
 /// Output format for dumping content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DumpFormat {
-    /// Native high-performance binary container (.plu)
-    Plu,
+    /// Markdown document with YAML frontmatter (.md)
+    Markdown,
     /// UTF-8 Plain text with page headers (.txt)
     Text,
+    /// Native high-performance binary container (.plu)
+    Plu,
     /// Full JSON document (.json)
     Json,
     /// JSON Lines format (one page per line) (.jsonl)
     JsonLines,
 }
 
+impl DumpFormat {
+    /// Returns the standard file extension for this format.
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Markdown => "md",
+            Self::Text => "txt",
+            Self::Plu => "plu",
+            Self::Json => "json",
+            Self::JsonLines => "jsonl",
+        }
+    }
+}
+
 impl fmt::Display for DumpFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Plu => write!(f, "PLU Binary Container"),
-            Self::Text => write!(f, "Plain Text"),
-            Self::Json => write!(f, "JSON"),
-            Self::JsonLines => write!(f, "JSON Lines"),
+            Self::Markdown => write!(f, "Markdown (.md)"),
+            Self::Text => write!(f, "Plain Text (.txt)"),
+            Self::Plu => write!(f, "PLU Binary Container (.plu)"),
+            Self::Json => write!(f, "JSON (.json)"),
+            Self::JsonLines => write!(f, "JSON Lines (.jsonl)"),
         }
     }
 }
