@@ -29,7 +29,7 @@ pub fn print_banner() {
     println!("{BRIGHT_CYAN}PLU{RESET} {YELLOW}v1.0.0{RESET} {BRIGHT_MAGENTA}•{RESET} {BRIGHT_WHITE}PDF Loader & Unloader{RESET}");
     println!("{CYAN}{}{RESET}", DIVIDER);
     println!(" {BRIGHT_GREEN}Welcome to PLU Engine!{RESET}");
-    println!(" {BRIGHT_WHITE}Ready to load PDF content and unload .plu files page by page.{RESET}");
+    println!(" {BRIGHT_WHITE}Ready to load PDF content and unload .txt files page by page.{RESET}");
     println!("{CYAN}{}{RESET}", DIVIDER);
 }
 
@@ -69,7 +69,7 @@ pub fn run_interactive_ui() -> Result<()> {
     loop {
         println!();
         print_banner();
-        print_menu_item("1", "Load & Unload PDF", "Extract page-by-page & unload into .plu (Single / Batch)");
+        print_menu_item("1", "Load & Unload PDF", "Extract page-by-page & unload into .txt (Single / Batch)");
         print_menu_item("2", "Exit", "Quit PLU Engine");
         print_divider();
         print!(" {BRIGHT_MAGENTA}Select an option [1-2]:{RESET} ");
@@ -136,8 +136,8 @@ fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
         // Batch Load & Unload Directory
         let default_out = input_path
             .file_name()
-            .map(|s| format!("{}_plu", s.to_string_lossy()))
-            .unwrap_or_else(|| "batch_plu_output".to_string());
+            .map(|s| format!("{}_txt", s.to_string_lossy()))
+            .unwrap_or_else(|| "batch_txt_output".to_string());
 
         let out_prompt = format!("Enter unload output directory [default: {}]:", default_out);
         let out_str = prompt_input(reader, &out_prompt)?;
@@ -155,7 +155,7 @@ fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
         print_kv("Unload Output Dir", &output_dir.display().to_string());
         print_divider();
 
-        match batch::run_batch_load(&input_path, &output_dir, threads, crate::types::DumpFormat::Plu) {
+        match batch::run_batch_load(&input_path, &output_dir, threads, crate::types::DumpFormat::Text) {
             Ok(stats) => {
                 print_batch_summary(&stats, "LOAD & UNLOAD", &output_dir);
             }
@@ -167,8 +167,8 @@ fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
         // Single File Load & Unload
         let default_output = input_path
             .file_stem()
-            .map(|s| format!("{}.plu", s.to_string_lossy()))
-            .unwrap_or_else(|| "output.plu".to_string());
+            .map(|s| format!("{}.txt", s.to_string_lossy()))
+            .unwrap_or_else(|| "output.txt".to_string());
 
         let out_prompt = format!("Enter unload destination path [default: {}]:", default_output);
         let out_input = prompt_input(reader, &out_prompt)?;

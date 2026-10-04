@@ -24,7 +24,7 @@ struct Args {
     #[arg(short = 'l', long = "load", value_name = "PATH")]
     load: Option<PathBuf>,
 
-    /// Path to file/directory to unload/dump to (default: <stem>.plu or <dir>_plu)
+    /// Path to file/directory to unload/dump to (default: <stem>.txt or <dir>_txt)
     #[arg(short = 'u', long = "unload", value_name = "PATH")]
     unload: Option<PathBuf>,
 
@@ -36,7 +36,7 @@ struct Args {
     #[arg(short = 't', long = "threads", value_name = "N")]
     threads: Option<usize>,
 
-    /// Force output format when dumping (plu, txt, json, jsonl)
+    /// Force output format when dumping (txt, plu, json, jsonl)
     #[arg(short = 'f', long = "format", value_name = "FORMAT")]
     format: Option<String>,
 
@@ -64,10 +64,14 @@ fn run(args: Args) -> Result<()> {
 
     match (&args.load, &args.unload) {
         // Case 1: Both --load and --unload provided:
-        // plu --load input.pdf --unload output.plu
+        // plu --load input.pdf --unload output.txt
         (Some(load_path), Some(unload_path)) => {
             if load_path.is_dir() || args.batch {
-                let fmt = parse_format(args.format.as_deref())?;
+                let fmt = if let Some(ref f) = args.format {
+                    parse_format(Some(f))?
+                } else {
+                    PdfUnloader::detect_format(unload_path)
+                };
                 let stats = batch::run_batch_load(load_path, unload_path, args.threads, fmt)?;
                 print_batch_summary(&stats, "LOAD & UNLOAD", unload_path);
                 Ok(())
@@ -76,13 +80,13 @@ fn run(args: Args) -> Result<()> {
             }
         }
 
-        // Case 2: Only --load provided (defaults unload target to <stem>.plu or <dir>_plu):
+        // Case 2: Only --load provided (defaults unload target to <stem>.txt or <dir>_txt):
         (Some(load_path), None) => {
             if load_path.is_dir() || args.batch {
                 let default_out = load_path
                     .parent()
                     .unwrap_or(load_path)
-                    .join(format!("{}_plu", load_path.file_name().unwrap().to_string_lossy()));
+                    .join(format!("{}_txt", load_path.file_name().unwrap().to_string_lossy()));
                 let fmt = parse_format(args.format.as_deref())?;
                 let stats = batch::run_batch_load(load_path, &default_out, args.threads, fmt)?;
                 print_batch_summary(&stats, "LOAD & UNLOAD", &default_out);
@@ -90,15 +94,15 @@ fn run(args: Args) -> Result<()> {
             } else {
                 let default_unload = load_path
                     .file_stem()
-                    .map(|s| PathBuf::from(format!("{}.plu", s.to_string_lossy())))
-                    .unwrap_or_else(|| PathBuf::from("output.plu"));
+                    .map(|s| PathBuf::from(format!("{}.txt", s.to_string_lossy())))
+                    .unwrap_or_else(|| PathBuf::from("output.txt"));
                 handle_load_and_unload(load_path, &default_unload, &args)
             }
         }
 
         // Case 3: Only --unload provided without --load:
         (None, Some(_)) => {
-            bail!("PLU is a unified pipeline holding Load & Unload together. Please specify --load:\n  plu --load input.pdf --unload output.plu\n  plu --load ./input_pdfs/ --unload ./output_plus/");
+            bail!("PLU is a unified pipeline holding Load & Unload together. Please specify --load:\n  plu --load input.pdf --unload output.txt\n  plu --load ./input_pdfs/ --unload ./output_txt/");
         }
 
         // Case 4: Neither provided -> Launch interactive CLI UI
@@ -109,14 +113,14 @@ fn run(args: Args) -> Result<()> {
 fn parse_format(fmt: Option<&str>) -> Result<DumpFormat> {
     if let Some(f) = fmt {
         match f.to_ascii_lowercase().as_str() {
-            "plu" => Ok(DumpFormat::Plu),
             "txt" => Ok(DumpFormat::Text),
+            "plu" => Ok(DumpFormat::Plu),
             "json" => Ok(DumpFormat::Json),
             "jsonl" => Ok(DumpFormat::JsonLines),
-            other => bail!("Unknown format: '{other}'. Choose from: plu, txt, json, jsonl"),
+            other => bail!("Unknown format: '{other}'. Choose from: txt, plu, json, jsonl"),
         }
     } else {
-        Ok(DumpFormat::Plu)
+        Ok(DumpFormat::Text)
     }
 }
 

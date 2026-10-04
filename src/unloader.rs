@@ -14,13 +14,13 @@ use std::time::Instant;
 pub struct PdfUnloader;
 
 impl PdfUnloader {
-    /// Detects format from file extension or defaults to .plu format.
+    /// Detects format from file extension or defaults to .txt format.
     pub fn detect_format(path: &Path) -> DumpFormat {
         match path.extension().and_then(|ext| ext.to_str()).map(|s| s.to_ascii_lowercase()) {
-            Some(ref s) if s == "txt" => DumpFormat::Text,
+            Some(ref s) if s == "plu" => DumpFormat::Plu,
             Some(ref s) if s == "json" => DumpFormat::Json,
             Some(ref s) if s == "jsonl" => DumpFormat::JsonLines,
-            _ => DumpFormat::Plu,
+            _ => DumpFormat::Text,
         }
     }
 
