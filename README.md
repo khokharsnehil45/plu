@@ -53,21 +53,17 @@ PLU v1.0.0 • PDF Loader & Unloader
  Welcome to PLU Engine!
  Ready to load PDF content and unload .plu files page by page.
 ────────────────────────────────────────────────────────────
- [1] Load PDF          Extract page-by-page (Single File or Batch Directory)
- [2] Unload .plu       Unload page-by-page (Single File or Batch Directory)
- [3] Exit              Quit PLU Engine
+ [1] Load & Unload PDF   Extract page-by-page & unload into .plu (Single / Batch)
+ [2] Exit                Quit PLU Engine
 ────────────────────────────────────────────────────────────
- Select an option [1-3]: 
+ Select an option [1-2]: 
 ```
 
 ---
 
-## 🚀 Usage & Features
+## 🚀 Unified Pipeline: Load & Unload
 
-PLU is engineered strictly for **Loading** and **Unloading** documents page-by-page at blazing speeds.
-
-### 1. Load PDF Page-by-Page (`--load` & `--unload`)
-Loads any PDF document, extracts page-by-page content concurrently across CPU cores, and dumps it into the `.plu` high-speed binary container:
+PLU is engineered around a single unified pipeline holding **Load** and **Unload** together. The Loader extracts PDF content page-by-page concurrently across multi-core CPUs, and the Unloader writes it directly into the high-performance `.plu` container:
 
 ```bash
 # Load PDF and unload into output container
@@ -84,36 +80,19 @@ plu --load document.pdf --unload document.json    # Structured JSON document
 plu --load document.pdf --unload document.jsonl   # Streaming JSON Lines (one line per page)
 ```
 
-### 2. Unload `.plu` Files Page-by-Page (`--unload`)
-Reads `.plu` container archives page-by-page, verifies payload CRC32 checksums, and unloads text content:
-
-```bash
-# Unload page-by-page (defaults to <file_stem>.txt)
-plu --unload document.plu
-
-# Explicit destination output file
-plu --unload document.plu --output extracted.txt
-```
-
 ---
 
 ## 🔄 Batch Processing Add-On
 
-PLU includes built-in batch processing for handling entire directories of PDFs or `.plu` archives:
+PLU includes built-in batch processing for handling entire directories of PDFs:
 
-### Batch Loading (Directory of PDFs ➔ `.plu` Containers)
+### Batch Load & Unload (Directory of PDFs ➔ `.plu` Containers)
 ```bash
 # Automatically detects directory and batch-loads all .pdf files
 plu --load ./documents_dir/ --unload ./plu_output_dir/
 
 # Or explicitly flag batch mode
 plu --batch --load ./documents_dir/ --unload ./plu_output_dir/
-```
-
-### Batch Unloading (Directory of `.plu` ➔ Text Dumps)
-```bash
-# Batch unloads every .plu container page-by-page into output folder
-plu --unload ./plu_output_dir/ --output ./text_dumps/
 ```
 
 ---
@@ -252,11 +231,10 @@ Usage: plu [OPTIONS]
 
 Options:
   -l, --load <PATH>      Path to input PDF file or directory to load (page-by-page extraction)
-  -u, --unload <PATH>    Path to file/directory to dump to, or .plu file/directory to unload from
-  -o, --output <PATH>    Output destination path for unloading (default: <stem>.txt or <dir>_unloaded)
+  -u, --unload <PATH>    Path to file/directory to unload/dump to (default: <stem>.plu or <dir>_plu)
   -b, --batch            Explicitly enable batch processing mode
-  -t, --threads <N>      Number of worker threads (default: CPU cores)
-  -f, --format <FORMAT>  Force output format when loading (plu, txt, json, jsonl)
+  -t, --threads <N>      Number of worker threads for parallel extraction (default: CPU cores)
+  -f, --format <FORMAT>  Force output format when dumping (plu, txt, json, jsonl)
       --ui               Launch interactive terminal UI
   -h, --help             Print help
   -V, --version          Print version
@@ -269,21 +247,15 @@ Options:
 PLU can also be embedded directly in your Rust applications:
 
 ```rust
-use plu::{PdfLoader, PdfUnloader, DumpFormat, load_and_unload, run_batch_load, run_batch_unload};
+use plu::{load_and_unload, run_batch_load, DumpFormat};
 use std::path::Path;
 
 fn main() -> anyhow::Result<()> {
-    // 1. Concurrent single file pipeline
+    // 1. Concurrent single-file Load & Unload pipeline
     load_and_unload("book.pdf", "output.plu", Some(8))?;
 
-    // 2. Unload .plu file page-by-page into text
-    PdfUnloader::unload_to_file("output.plu", "output.txt", None)?;
-
-    // 3. Batch load directory of PDFs
+    // 2. Batch Load & Unload directory of PDFs
     run_batch_load(Path::new("./pdfs"), Path::new("./plus"), Some(8), DumpFormat::Plu)?;
-
-    // 4. Batch unload directory of .plu containers
-    run_batch_unload(Path::new("./plus"), Path::new("./texts"))?;
 
     Ok(())
 }

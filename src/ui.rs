@@ -56,7 +56,7 @@ pub fn print_kv_colored(key: &str, value: &str, key_color: &str, val_color: &str
 /// Prints a formatted menu option with title and description
 pub fn print_menu_item(tag: &str, title: &str, desc: &str) {
     println!(
-        " {BRIGHT_YELLOW}[{}]{RESET} {BRIGHT_WHITE}{:<18}{RESET} {GRAY}{}{RESET}",
+        " {BRIGHT_YELLOW}[{}]{RESET} {BRIGHT_WHITE}{:<20}{RESET} {GRAY}{}{RESET}",
         tag, title, desc
     );
 }
@@ -69,11 +69,10 @@ pub fn run_interactive_ui() -> Result<()> {
     loop {
         println!();
         print_banner();
-        print_menu_item("1", "Load PDF", "Extract page-by-page (Single File or Batch Directory)");
-        print_menu_item("2", "Unload .plu", "Unload page-by-page (Single File or Batch Directory)");
-        print_menu_item("3", "Exit", "Quit PLU Engine");
+        print_menu_item("1", "Load & Unload PDF", "Extract page-by-page & unload into .plu (Single / Batch)");
+        print_menu_item("2", "Exit", "Quit PLU Engine");
         print_divider();
-        print!(" {BRIGHT_MAGENTA}Select an option [1-3]:{RESET} ");
+        print!(" {BRIGHT_MAGENTA}Select an option [1-2]:{RESET} ");
         io::stdout().flush()?;
 
         let mut choice = String::new();
@@ -83,9 +82,8 @@ pub fn run_interactive_ui() -> Result<()> {
         let choice = choice.trim();
 
         match choice {
-            "1" => ui_load(&mut reader)?,
-            "2" => ui_unload(&mut reader)?,
-            "3" | "q" | "exit" => {
+            "1" => ui_load_and_unload(&mut reader)?,
+            "2" | "q" | "exit" => {
                 println!();
                 print_divider_color(BRIGHT_GREEN);
                 println!(" {BRIGHT_GREEN}Exiting PLU. Have a great day!{RESET}");
@@ -95,7 +93,7 @@ pub fn run_interactive_ui() -> Result<()> {
             _ => {
                 println!();
                 print_divider_color(RED);
-                println!(" {RED}Invalid choice. Please select 1, 2, or 3.{RESET}");
+                println!(" {RED}Invalid choice. Please select 1 or 2.{RESET}");
                 print_divider_color(RED);
             }
         }
@@ -112,14 +110,14 @@ fn prompt_input<R: BufRead>(reader: &mut R, prompt: &str) -> Result<String> {
     Ok(line.trim().to_string())
 }
 
-/// Option 1: Load PDF (Single File or Batch Directory)
-fn ui_load<R: BufRead>(reader: &mut R) -> Result<()> {
+/// Single unified feature: Load & Unload PDF (Single File or Batch Directory)
+fn ui_load_and_unload<R: BufRead>(reader: &mut R) -> Result<()> {
     println!();
     print_divider();
-    println!(" {BRIGHT_CYAN}LOAD PDF (PAGE-BY-PAGE EXTRACTION){RESET}");
+    println!(" {BRIGHT_CYAN}LOAD & UNLOAD PDF (PAGE-BY-PAGE STREAMING){RESET}");
     print_divider();
 
-    let input_str = prompt_input(reader, "Enter PDF file or directory path:")?;
+    let input_str = prompt_input(reader, "Enter input PDF path (file or directory):")?;
     if input_str.is_empty() {
         println!(" {YELLOW}Operation cancelled.{RESET}");
         return Ok(());
@@ -135,13 +133,13 @@ fn ui_load<R: BufRead>(reader: &mut R) -> Result<()> {
     let threads: Option<usize> = threads_input.parse().ok();
 
     if input_path.is_dir() {
-        // Batch Load Directory
+        // Batch Load & Unload Directory
         let default_out = input_path
             .file_name()
             .map(|s| format!("{}_plu", s.to_string_lossy()))
             .unwrap_or_else(|| "batch_plu_output".to_string());
 
-        let out_prompt = format!("Enter output directory [default: {}]:", default_out);
+        let out_prompt = format!("Enter unload output directory [default: {}]:", default_out);
         let out_str = prompt_input(reader, &out_prompt)?;
         let output_dir = if out_str.is_empty() {
             input_path.parent().unwrap_or(&input_path).join(default_out)
@@ -151,28 +149,28 @@ fn ui_load<R: BufRead>(reader: &mut R) -> Result<()> {
 
         println!();
         print_divider();
-        println!(" {BRIGHT_CYAN}STARTING BATCH EXTRACTION PIPELINE{RESET}");
+        println!(" {BRIGHT_CYAN}STARTING BATCH EXTRACTION & UNLOAD PIPELINE{RESET}");
         print_divider();
         print_kv("Input Directory", &input_path.display().to_string());
-        print_kv("Output Directory", &output_dir.display().to_string());
+        print_kv("Unload Output Dir", &output_dir.display().to_string());
         print_divider();
 
         match batch::run_batch_load(&input_path, &output_dir, threads, crate::types::DumpFormat::Plu) {
             Ok(stats) => {
-                print_batch_summary(&stats, "LOAD", &output_dir);
+                print_batch_summary(&stats, "LOAD & UNLOAD", &output_dir);
             }
             Err(e) => {
-                println!(" {RED}Batch Load Error: {e}{RESET}");
+                println!(" {RED}Batch Error: {e}{RESET}");
             }
         }
     } else {
-        // Single File Load
+        // Single File Load & Unload
         let default_output = input_path
             .file_stem()
             .map(|s| format!("{}.plu", s.to_string_lossy()))
             .unwrap_or_else(|| "output.plu".to_string());
 
-        let out_prompt = format!("Enter output path [default: {}]:", default_output);
+        let out_prompt = format!("Enter unload destination path [default: {}]:", default_output);
         let out_input = prompt_input(reader, &out_prompt)?;
         let output_path = if out_input.is_empty() {
             input_path.parent().unwrap_or(&input_path).join(default_output)
@@ -182,10 +180,10 @@ fn ui_load<R: BufRead>(reader: &mut R) -> Result<()> {
 
         println!();
         print_divider();
-        println!(" {BRIGHT_CYAN}STARTING EXTRACTION PIPELINE{RESET}");
+        println!(" {BRIGHT_CYAN}STARTING EXTRACTION & UNLOAD PIPELINE{RESET}");
         print_divider();
         print_kv("Input PDF", &input_path.display().to_string());
-        print_kv("Output File", &output_path.display().to_string());
+        print_kv("Unload Output File", &output_path.display().to_string());
 
         let start_time = Instant::now();
         let loader = match PdfLoader::load_file(&input_path) {
@@ -275,118 +273,6 @@ fn ui_load<R: BufRead>(reader: &mut R) -> Result<()> {
         );
         print_kv_colored("Throughput", &format!("{:.1} pages/sec", pps), YELLOW, BRIGHT_GREEN);
         print_kv_colored("Elapsed Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
-        print_divider_color(BRIGHT_GREEN);
-    }
-
-    Ok(())
-}
-
-/// Option 2: Unload .plu (Single File or Batch Directory)
-fn ui_unload<R: BufRead>(reader: &mut R) -> Result<()> {
-    println!();
-    print_divider();
-    println!(" {BRIGHT_CYAN}UNLOAD .PLU CONTAINER (PAGE-BY-PAGE){RESET}");
-    print_divider();
-
-    let input_str = prompt_input(reader, "Enter .plu file or directory path:")?;
-    if input_str.is_empty() {
-        return Ok(());
-    }
-
-    let input_path = PathBuf::from(&input_str);
-    if !input_path.exists() {
-        println!(" {RED}Error: Path does not exist: {}{RESET}", input_str);
-        return Ok(());
-    }
-
-    if input_path.is_dir() {
-        // Batch Unload Directory
-        let default_out = input_path
-            .file_name()
-            .map(|s| format!("{}_unloaded", s.to_string_lossy()))
-            .unwrap_or_else(|| "batch_unloaded_output".to_string());
-
-        let out_prompt = format!("Enter output directory [default: {}]:", default_out);
-        let out_str = prompt_input(reader, &out_prompt)?;
-        let output_dir = if out_str.is_empty() {
-            input_path.parent().unwrap_or(&input_path).join(default_out)
-        } else {
-            PathBuf::from(out_str)
-        };
-
-        println!();
-        print_divider();
-        println!(" {BRIGHT_CYAN}STARTING BATCH UNLOAD PIPELINE{RESET}");
-        print_divider();
-        print_kv("Input Directory", &input_path.display().to_string());
-        print_kv("Output Directory", &output_dir.display().to_string());
-        print_divider();
-
-        match batch::run_batch_unload(&input_path, &output_dir) {
-            Ok(stats) => {
-                print_batch_summary(&stats, "UNLOAD", &output_dir);
-            }
-            Err(e) => {
-                println!(" {RED}Batch Unload Error: {e}{RESET}");
-            }
-        }
-    } else {
-        // Single File Unload
-        let default_output = input_path
-            .file_stem()
-            .map(|s| format!("{}.txt", s.to_string_lossy()))
-            .unwrap_or_else(|| "unloaded.txt".to_string());
-
-        let out_prompt = format!("Enter destination text file [default: {}]:", default_output);
-        let out_str = prompt_input(reader, &out_prompt)?;
-        let output_file = if out_str.is_empty() {
-            input_path.parent().unwrap_or(&input_path).join(default_output)
-        } else {
-            PathBuf::from(out_str)
-        };
-
-        println!();
-        print_divider();
-        println!(" {BRIGHT_CYAN}STARTING UNLOAD STREAM{RESET}");
-        print_divider();
-        print_kv("Container File", &input_path.display().to_string());
-        print_kv("Destination File", &output_file.display().to_string());
-        print_divider();
-
-        let pb = ProgressBar::new(1);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:30.cyan/blue}] {pos}/{len} pages ({per_sec}) {msg}")
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
-                .progress_chars("█▓▒░ "),
-        );
-        pb.set_message("Reading .plu pages");
-
-        let stats = match PdfUnloader::unload_to_file(&input_path, &output_file, Some(pb)) {
-            Ok(s) => s,
-            Err(e) => {
-                println!(" {RED}Unload Error: {e}{RESET}");
-                return Ok(());
-            }
-        };
-
-        let total_secs = stats.duration_ms as f64 / 1000.0;
-        let pps = if total_secs > 0.0 {
-            stats.pages_processed as f64 / total_secs
-        } else {
-            stats.pages_processed as f64
-        };
-
-        println!();
-        print_divider_color(BRIGHT_GREEN);
-        println!(" {BRIGHT_GREEN}UNLOAD COMPLETED SUCCESSFULLY{RESET}");
-        print_divider_color(BRIGHT_GREEN);
-        print_kv_colored("Output File", &output_file.display().to_string(), YELLOW, BRIGHT_WHITE);
-        print_kv_colored("Pages Unloaded", &stats.pages_processed.to_string(), YELLOW, BRIGHT_GREEN);
-        print_kv_colored("Total Characters", &stats.total_chars.to_string(), YELLOW, BRIGHT_WHITE);
-        print_kv_colored("Total Words", &stats.total_words.to_string(), YELLOW, BRIGHT_WHITE);
-        print_kv_colored("Throughput", &format!("{:.1} pages/sec", pps), YELLOW, BRIGHT_GREEN);
-        print_kv_colored("Elapsed Time", &format!("{:.2}s", total_secs), YELLOW, BRIGHT_GREEN);
         print_divider_color(BRIGHT_GREEN);
     }
 

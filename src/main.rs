@@ -24,13 +24,9 @@ struct Args {
     #[arg(short = 'l', long = "load", value_name = "PATH")]
     load: Option<PathBuf>,
 
-    /// Path to file/directory to dump to, or .plu file/directory to unload from
+    /// Path to file/directory to unload/dump to (default: <stem>.plu or <dir>_plu)
     #[arg(short = 'u', long = "unload", value_name = "PATH")]
     unload: Option<PathBuf>,
-
-    /// Output destination path for unloading (default: <stem>.txt or <dir>_unloaded)
-    #[arg(short = 'o', long = "output", value_name = "PATH")]
-    output: Option<PathBuf>,
 
     /// Explicitly enable batch processing mode
     #[arg(short = 'b', long = "batch")]
@@ -40,7 +36,7 @@ struct Args {
     #[arg(short = 't', long = "threads", value_name = "N")]
     threads: Option<usize>,
 
-    /// Force output format when loading (plu, txt, json, jsonl)
+    /// Force output format when dumping (plu, txt, json, jsonl)
     #[arg(short = 'f', long = "format", value_name = "FORMAT")]
     format: Option<String>,
 
@@ -68,27 +64,28 @@ fn run(args: Args) -> Result<()> {
 
     match (&args.load, &args.unload) {
         // Case 1: Both --load and --unload provided:
-        // plu --load input --unload output
+        // plu --load input.pdf --unload output.plu
         (Some(load_path), Some(unload_path)) => {
             if load_path.is_dir() || args.batch {
                 let fmt = parse_format(args.format.as_deref())?;
                 let stats = batch::run_batch_load(load_path, unload_path, args.threads, fmt)?;
-                print_batch_summary(&stats, "LOAD", unload_path);
+                print_batch_summary(&stats, "LOAD & UNLOAD", unload_path);
                 Ok(())
             } else {
                 handle_load_and_unload(load_path, unload_path, &args)
             }
         }
 
-        // Case 2: Only --load provided:
+        // Case 2: Only --load provided (defaults unload target to <stem>.plu or <dir>_plu):
         (Some(load_path), None) => {
             if load_path.is_dir() || args.batch {
-                let default_out = args.output.unwrap_or_else(|| {
-                    PathBuf::from(format!("{}_plu", load_path.display()))
-                });
+                let default_out = load_path
+                    .parent()
+                    .unwrap_or(load_path)
+                    .join(format!("{}_plu", load_path.file_name().unwrap().to_string_lossy()));
                 let fmt = parse_format(args.format.as_deref())?;
                 let stats = batch::run_batch_load(load_path, &default_out, args.threads, fmt)?;
-                print_batch_summary(&stats, "LOAD", &default_out);
+                print_batch_summary(&stats, "LOAD & UNLOAD", &default_out);
                 Ok(())
             } else {
                 let default_unload = load_path
@@ -99,24 +96,9 @@ fn run(args: Args) -> Result<()> {
             }
         }
 
-        // Case 3: Only --unload provided:
-        (None, Some(unload_path)) => {
-            if unload_path.is_dir() || args.batch {
-                let default_out = args.output.unwrap_or_else(|| {
-                    PathBuf::from(format!("{}_unloaded", unload_path.display()))
-                });
-                let stats = batch::run_batch_unload(unload_path, &default_out)?;
-                print_batch_summary(&stats, "UNLOAD", &default_out);
-                Ok(())
-            } else {
-                let target_out = args.output.unwrap_or_else(|| {
-                    unload_path
-                        .file_stem()
-                        .map(|s| PathBuf::from(format!("{}.txt", s.to_string_lossy())))
-                        .unwrap_or_else(|| PathBuf::from("unloaded.txt"))
-                });
-                handle_unload_only(unload_path, &target_out)
-            }
+        // Case 3: Only --unload provided without --load:
+        (None, Some(_)) => {
+            bail!("PLU is a unified pipeline holding Load & Unload together. Please specify --load:\n  plu --load input.pdf --unload output.plu\n  plu --load ./input_pdfs/ --unload ./output_plus/");
         }
 
         // Case 4: Neither provided -> Launch interactive CLI UI
@@ -243,52 +225,6 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     );
     print_kv_colored("Throughput", &format!("{:.1} pages/sec", pps), YELLOW, BRIGHT_GREEN);
     print_kv_colored("Total Elapsed", &format!("{:.2?}", total_elapsed), YELLOW, BRIGHT_GREEN);
-    print_divider_color(BRIGHT_GREEN);
-
-    Ok(())
-}
-
-/// Handles unloading an existing .plu container page-by-page into a target text file with real-time progress bar
-fn handle_unload_only(plu_path: &Path, output_path: &Path) -> Result<()> {
-    println!();
-    print_banner();
-    println!(" {YELLOW}Action{RESET}               : Unload .plu Container Page-by-Page");
-    print_kv("Container File", &plu_path.display().to_string());
-    print_kv("Destination File", &output_path.display().to_string());
-    print_divider();
-
-    let pb = ProgressBar::new(1);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:30.cyan/blue}] {pos}/{len} pages ({per_sec}) {msg}")
-            .unwrap_or_else(|_| ProgressStyle::default_bar())
-            .progress_chars("█▓▒░ "),
-    );
-    pb.set_message("Reading .plu pages");
-
-    let stats = PdfUnloader::unload_to_file(plu_path, output_path, Some(pb))?;
-
-    let total_secs = stats.duration_ms as f64 / 1000.0;
-    let pps = if total_secs > 0.0 {
-        stats.pages_processed as f64 / total_secs
-    } else {
-        stats.pages_processed as f64
-    };
-
-    println!();
-    print_divider_color(BRIGHT_GREEN);
-    println!(" {BRIGHT_GREEN}CONTAINER UNLOADED SUCCESSFULLY{RESET}");
-    print_divider_color(BRIGHT_GREEN);
-    print_kv("Destination File", &output_path.display().to_string());
-    print_kv_colored("Pages Unloaded", &stats.pages_processed.to_string(), YELLOW, BRIGHT_GREEN);
-    print_kv("Total Characters", &stats.total_chars.to_string());
-    print_kv("Total Words", &stats.total_words.to_string());
-    print_kv(
-        "Payload Size",
-        &format!("{:.2} KB ({} bytes)", stats.bytes_written as f64 / 1024.0, stats.bytes_written),
-    );
-    print_kv_colored("Throughput", &format!("{:.1} pages/sec", pps), YELLOW, BRIGHT_GREEN);
-    print_kv_colored("Total Elapsed", &format!("{:.2}s", total_secs), YELLOW, BRIGHT_GREEN);
     print_divider_color(BRIGHT_GREEN);
 
     Ok(())
