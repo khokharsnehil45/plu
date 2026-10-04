@@ -233,7 +233,7 @@ impl PluFormat {
         bail!("Page {} not found in .plu container", target_page_num);
     }
 
-    fn read_header_and_index_pos<R: Read + Seek>(
+    pub fn read_header_and_index_pos<R: Read + Seek>(
         reader: &mut R,
     ) -> Result<(DocumentMeta, u64, u32)> {
         let mut magic = [0u8; 4];
@@ -294,7 +294,7 @@ impl PluFormat {
         Ok((meta, index_offset, page_count))
     }
 
-    fn read_page_record<R: Read>(reader: &mut R) -> Result<PageData> {
+    pub fn read_page_record<R: Read>(reader: &mut R) -> Result<PageData> {
         let page_num = reader.read_u32::<LittleEndian>()?;
         let width = reader.read_f32::<LittleEndian>()?;
         let height = reader.read_f32::<LittleEndian>()?;

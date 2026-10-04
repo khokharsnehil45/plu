@@ -1,10 +1,12 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
+use indicatif::{ProgressBar, ProgressStyle};
+use plu::batch::{self, print_batch_summary};
 use plu::loader::PdfLoader;
-use plu::types::{DumpFormat, PageData, PluDocument};
+use plu::types::DumpFormat;
 use plu::ui::{
     print_banner, print_divider, print_divider_color, print_kv, print_kv_colored,
-    run_interactive_ui, BRIGHT_CYAN, BRIGHT_GREEN, RED, RESET, YELLOW,
+    run_interactive_ui, BRIGHT_GREEN, RED, RESET, YELLOW,
 };
 use plu::unloader::PdfUnloader;
 use std::path::{Path, PathBuf};
@@ -15,36 +17,32 @@ use std::time::Instant;
     name = "plu",
     author = "High Performance PDF Systems",
     version = "1.0.0",
-    about = "High-performance PDF Loader & Unloader: Page-by-page extraction and .plu container reader"
+    about = "High-performance PDF Loader & Unloader: Page-by-page extraction, .plu container reader, and batch processing"
 )]
 struct Args {
-    /// Path to input PDF file to load (page-by-page extraction)
-    #[arg(short = 'l', long = "load", value_name = "FILE_PATH")]
+    /// Path to input PDF file or directory to load (page-by-page extraction)
+    #[arg(short = 'l', long = "load", value_name = "PATH")]
     load: Option<PathBuf>,
 
-    /// Path to file to dump / unload to, or .plu file to unload from
-    #[arg(short = 'u', long = "unload", value_name = "FILE_PATH")]
+    /// Path to file/directory to dump to, or .plu file/directory to unload from
+    #[arg(short = 'u', long = "unload", value_name = "PATH")]
     unload: Option<PathBuf>,
 
-    /// Specific page number to inspect or extract (1-based)
-    #[arg(short = 'p', long = "page", value_name = "PAGE_NUM")]
-    page: Option<u32>,
+    /// Output destination path for unloading (default: <stem>.txt or <dir>_unloaded)
+    #[arg(short = 'o', long = "output", value_name = "PATH")]
+    output: Option<PathBuf>,
 
-    /// Unpack all pages from a .plu file into individual text files in this directory
-    #[arg(long = "unpack", value_name = "OUTPUT_DIR")]
-    unpack: Option<PathBuf>,
+    /// Explicitly enable batch processing mode
+    #[arg(short = 'b', long = "batch")]
+    batch: bool,
 
     /// Number of worker threads for parallel extraction (default: CPU cores)
     #[arg(short = 't', long = "threads", value_name = "N")]
     threads: Option<usize>,
 
-    /// Force output format (plu, txt, json, jsonl)
+    /// Force output format when loading (plu, txt, json, jsonl)
     #[arg(short = 'f', long = "format", value_name = "FORMAT")]
     format: Option<String>,
-
-    /// Verbose output with detailed page-by-page inventory
-    #[arg(short = 'v', long = "verbose")]
-    verbose: bool,
 
     /// Launch interactive terminal UI
     #[arg(long = "ui")]
@@ -70,31 +68,77 @@ fn run(args: Args) -> Result<()> {
 
     match (&args.load, &args.unload) {
         // Case 1: Both --load and --unload provided:
-        // plu --load input.pdf --unload output.plu
+        // plu --load input --unload output
         (Some(load_path), Some(unload_path)) => {
-            handle_load_and_unload(load_path, unload_path, &args)
+            if load_path.is_dir() || args.batch {
+                let fmt = parse_format(args.format.as_deref())?;
+                let stats = batch::run_batch_load(load_path, unload_path, args.threads, fmt)?;
+                print_batch_summary(&stats, "LOAD", unload_path);
+                Ok(())
+            } else {
+                handle_load_and_unload(load_path, unload_path, &args)
+            }
         }
 
         // Case 2: Only --load provided:
-        // Default unload target is `<file_stem>.plu`
         (Some(load_path), None) => {
-            let default_unload = load_path
-                .file_stem()
-                .map(|s| PathBuf::from(format!("{}.plu", s.to_string_lossy())))
-                .unwrap_or_else(|| PathBuf::from("output.plu"));
-            handle_load_and_unload(load_path, &default_unload, &args)
+            if load_path.is_dir() || args.batch {
+                let default_out = args.output.unwrap_or_else(|| {
+                    PathBuf::from(format!("{}_plu", load_path.display()))
+                });
+                let fmt = parse_format(args.format.as_deref())?;
+                let stats = batch::run_batch_load(load_path, &default_out, args.threads, fmt)?;
+                print_batch_summary(&stats, "LOAD", &default_out);
+                Ok(())
+            } else {
+                let default_unload = load_path
+                    .file_stem()
+                    .map(|s| PathBuf::from(format!("{}.plu", s.to_string_lossy())))
+                    .unwrap_or_else(|| PathBuf::from("output.plu"));
+                handle_load_and_unload(load_path, &default_unload, &args)
+            }
         }
 
         // Case 3: Only --unload provided:
-        // Read and unload existing .plu dump file page by page
-        (None, Some(unload_path)) => handle_unload_only(unload_path, &args),
+        (None, Some(unload_path)) => {
+            if unload_path.is_dir() || args.batch {
+                let default_out = args.output.unwrap_or_else(|| {
+                    PathBuf::from(format!("{}_unloaded", unload_path.display()))
+                });
+                let stats = batch::run_batch_unload(unload_path, &default_out)?;
+                print_batch_summary(&stats, "UNLOAD", &default_out);
+                Ok(())
+            } else {
+                let target_out = args.output.unwrap_or_else(|| {
+                    unload_path
+                        .file_stem()
+                        .map(|s| PathBuf::from(format!("{}.txt", s.to_string_lossy())))
+                        .unwrap_or_else(|| PathBuf::from("unloaded.txt"))
+                });
+                handle_unload_only(unload_path, &target_out)
+            }
+        }
 
         // Case 4: Neither provided -> Launch interactive CLI UI
         (None, None) => run_interactive_ui(),
     }
 }
 
-/// Executes the concurrent loader -> unloader streaming pipeline
+fn parse_format(fmt: Option<&str>) -> Result<DumpFormat> {
+    if let Some(f) = fmt {
+        match f.to_ascii_lowercase().as_str() {
+            "plu" => Ok(DumpFormat::Plu),
+            "txt" => Ok(DumpFormat::Text),
+            "json" => Ok(DumpFormat::Json),
+            "jsonl" => Ok(DumpFormat::JsonLines),
+            other => bail!("Unknown format: '{other}'. Choose from: plu, txt, json, jsonl"),
+        }
+    } else {
+        Ok(DumpFormat::Plu)
+    }
+}
+
+/// Executes the concurrent loader -> unloader streaming pipeline with real-time progress bar
 fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> Result<()> {
     println!();
     print_banner();
@@ -126,13 +170,7 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     }
 
     let dump_format = if let Some(ref fmt) = args.format {
-        match fmt.to_ascii_lowercase().as_str() {
-            "plu" => DumpFormat::Plu,
-            "txt" => DumpFormat::Text,
-            "json" => DumpFormat::Json,
-            "jsonl" => DumpFormat::JsonLines,
-            other => bail!("Unknown format: '{other}'. Choose from: plu, txt, json, jsonl"),
-        }
+        parse_format(Some(fmt))?
     } else {
         PdfUnloader::detect_format(unload_path)
     };
@@ -147,39 +185,42 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     print_kv("Unloader Thread", "1 (Dedicated OS Thread)");
     print_divider();
 
-    let stats = if let Some(single_page) = args.page {
-        if single_page < 1 || single_page > total_pages {
-            bail!("Requested page {single_page} is out of range (1..={total_pages})");
-        }
-        println!(" Extracting single page: {}", single_page);
-        let page = loader.extract_page(single_page)?;
-        let doc = PluDocument::new(
-            loader.source_path().to_string_lossy().to_string(),
-            doc_meta.title,
-            doc_meta.author,
-            vec![page],
-        );
-        PdfUnloader::dump_with_format(&doc, unload_path, dump_format)?
-    } else {
-        let channel_cap = (effective_threads * 4).max(32);
-        let (tx, rx) = crossbeam_channel::bounded::<PageData>(channel_cap);
+    // Progress Bar
+    let pb = ProgressBar::new(total_pages as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:30.cyan/blue}] {pos}/{len} pages ({per_sec}) {msg}")
+            .unwrap_or_else(|_| ProgressStyle::default_bar())
+            .progress_chars("█▓▒░ "),
+    );
+    pb.set_message("Extracting pages");
 
-        let unloader_path = unload_path.to_path_buf();
-        let unloader_meta = doc_meta.clone();
+    let channel_cap = (effective_threads * 4).max(32);
+    let (tx, rx) = crossbeam_channel::bounded(channel_cap);
 
-        let unloader_handle = std::thread::Builder::new()
-            .name("unloader".to_string())
-            .spawn(move || {
-                PdfUnloader::dump_stream(rx, &unloader_meta, total_pages, unloader_path, dump_format)
-            })
-            .context("Failed to spawn Unloader thread")?;
+    let unloader_path = unload_path.to_path_buf();
+    let unloader_meta = doc_meta.clone();
+    let pb_clone = pb.clone();
 
-        loader.stream_pages_parallel(tx, args.threads)?;
+    let unloader_handle = std::thread::Builder::new()
+        .name("unloader".to_string())
+        .spawn(move || {
+            PdfUnloader::dump_stream_with_progress(
+                rx,
+                &unloader_meta,
+                total_pages,
+                unloader_path,
+                dump_format,
+                Some(pb_clone),
+            )
+        })
+        .context("Failed to spawn Unloader thread")?;
 
-        unloader_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("Unloader thread panicked"))??
-    };
+    loader.stream_pages_parallel(tx, args.threads)?;
+
+    let stats = unloader_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("Unloader thread panicked"))??;
 
     let total_elapsed = overall_start.elapsed();
     let pps = if total_elapsed.as_secs_f64() > 0.0 {
@@ -207,83 +248,48 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     Ok(())
 }
 
-/// Handles unloading / inspecting an existing .plu container page by page
-fn handle_unload_only(plu_path: &Path, args: &Args) -> Result<()> {
+/// Handles unloading an existing .plu container page-by-page into a target text file with real-time progress bar
+fn handle_unload_only(plu_path: &Path, output_path: &Path) -> Result<()> {
     println!();
     print_banner();
-    println!(" {YELLOW}Action{RESET}               : Unload & Read .plu Container Page-by-Page");
-    print_kv("Reading File", &plu_path.display().to_string());
+    println!(" {YELLOW}Action{RESET}               : Unload .plu Container Page-by-Page");
+    print_kv("Container File", &plu_path.display().to_string());
+    print_kv("Destination File", &output_path.display().to_string());
+    print_divider();
 
-    let start = Instant::now();
+    let pb = ProgressBar::new(1);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:30.cyan/blue}] {pos}/{len} pages ({per_sec}) {msg}")
+            .unwrap_or_else(|_| ProgressStyle::default_bar())
+            .progress_chars("█▓▒░ "),
+    );
+    pb.set_message("Reading .plu pages");
 
-    if let Some(ref out_dir) = args.unpack {
-        print_kv("Unpack Target", &out_dir.display().to_string());
-        print_divider();
-        let count = PdfUnloader::unpack_to_directory(plu_path, out_dir)?;
-        println!();
-        print_divider_color(BRIGHT_GREEN);
-        println!(" {BRIGHT_GREEN}UNPACK COMPLETED{RESET}");
-        print_divider_color(BRIGHT_GREEN);
-        print_kv_colored("Unpacked Pages", &count.to_string(), YELLOW, BRIGHT_GREEN);
-        print_kv("Destination", &out_dir.display().to_string());
-        print_kv_colored("Elapsed Time", &format!("{:.2?}", start.elapsed()), YELLOW, BRIGHT_GREEN);
-        print_divider_color(BRIGHT_GREEN);
-        return Ok(());
-    }
+    let stats = PdfUnloader::unload_to_file(plu_path, output_path, Some(pb))?;
 
-    if let Some(page_num) = args.page {
-        let page = PdfUnloader::unload_single_page(plu_path, page_num)?;
-        let elapsed = start.elapsed();
-        println!();
-        print_divider_color(BRIGHT_GREEN);
-        println!(" {BRIGHT_GREEN}PAGE {} CONTENT (O(1) RANDOM ACCESS LOOKUP){RESET}", page.page_num);
-        print_divider_color(BRIGHT_GREEN);
-        print_kv("Dimensions", &format!("{}x{} pt", page.width, page.height));
-        print_kv("Characters", &page.char_count.to_string());
-        print_kv("Words", &page.word_count.to_string());
-        print_kv_colored("Lookup Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
-        print_divider();
-        println!("{}", page.text.trim());
-        print_divider();
-        return Ok(());
-    }
-
-    let doc = PdfUnloader::unload_file(plu_path)?;
-    let elapsed = start.elapsed();
+    let total_secs = stats.duration_ms as f64 / 1000.0;
+    let pps = if total_secs > 0.0 {
+        stats.pages_processed as f64 / total_secs
+    } else {
+        stats.pages_processed as f64
+    };
 
     println!();
     print_divider_color(BRIGHT_GREEN);
-    println!(" {BRIGHT_GREEN}CONTAINER VERIFIED AND UNLOADED{RESET}");
+    println!(" {BRIGHT_GREEN}CONTAINER UNLOADED SUCCESSFULLY{RESET}");
     print_divider_color(BRIGHT_GREEN);
-    print_kv("Source PDF", &doc.meta.source_path);
-    if let Some(ref title) = doc.meta.title {
-        print_kv("Title", title);
-    }
-    if let Some(ref author) = doc.meta.author {
-        print_kv("Author", author);
-    }
-    print_kv("Total Pages", &doc.meta.page_count.to_string());
-    print_kv("Total Characters", &doc.meta.total_chars.to_string());
-    print_kv("Total Words", &doc.meta.total_words.to_string());
-    print_kv_colored("Verification Time", &format!("{:.2?}", elapsed), YELLOW, BRIGHT_GREEN);
+    print_kv("Destination File", &output_path.display().to_string());
+    print_kv_colored("Pages Unloaded", &stats.pages_processed.to_string(), YELLOW, BRIGHT_GREEN);
+    print_kv("Total Characters", &stats.total_chars.to_string());
+    print_kv("Total Words", &stats.total_words.to_string());
+    print_kv(
+        "Payload Size",
+        &format!("{:.2} KB ({} bytes)", stats.bytes_written as f64 / 1024.0, stats.bytes_written),
+    );
+    print_kv_colored("Throughput", &format!("{:.1} pages/sec", pps), YELLOW, BRIGHT_GREEN);
+    print_kv_colored("Total Elapsed", &format!("{:.2}s", total_secs), YELLOW, BRIGHT_GREEN);
     print_divider_color(BRIGHT_GREEN);
-
-    if args.verbose {
-        println!();
-        print_divider();
-        println!(" {BRIGHT_CYAN}PAGE-BY-PAGE INVENTORY{RESET}");
-        print_divider();
-        for p in &doc.pages {
-            println!(
-                " Page {:>4} : {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
-                p.page_num, p.width, p.height, p.char_count, p.word_count
-            );
-        }
-        print_divider();
-    } else {
-        println!(" {YELLOW}Tip:{RESET} Use `--verbose` for page-by-page inventory, or `--page <N>` to read a page.");
-        print_divider();
-    }
 
     Ok(())
 }

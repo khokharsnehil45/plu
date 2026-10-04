@@ -1,9 +1,11 @@
+pub mod batch;
 pub mod format;
 pub mod loader;
 pub mod types;
 pub mod ui;
 pub mod unloader;
 
+pub use batch::{discover_files, run_batch_load, run_batch_unload, BatchStats};
 pub use format::{PluFormat, PLU_MAGIC, PLU_VERSION};
 pub use loader::PdfLoader;
 pub use types::{DocumentMeta, DumpFormat, OperationStats, PageData, PluDocument};

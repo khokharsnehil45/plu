@@ -1,9 +1,11 @@
 use crate::format::PluFormat;
-use crate::types::{DumpFormat, OperationStats, PageData, PluDocument, DocumentMeta};
+use crate::types::{DocumentMeta, DumpFormat, OperationStats, PageData, PluDocument};
 use anyhow::{bail, Context, Result};
+use byteorder::{LittleEndian, ReadBytesExt};
+use indicatif::ProgressBar;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Instant;
 
@@ -121,14 +123,25 @@ impl PdfUnloader {
     }
 
     /// Streams pages directly from a concurrent receiver channel and dumps them to disk in real time.
-    /// Uses an internal reorder buffer to guarantee sequential page ordering on disk even when
-    /// worker threads extract pages out-of-order concurrently.
     pub fn dump_stream<P: AsRef<Path>>(
         receiver: crossbeam_channel::Receiver<PageData>,
         meta: &DocumentMeta,
         page_count: u32,
         output_path: P,
         format: DumpFormat,
+    ) -> Result<OperationStats> {
+        Self::dump_stream_with_progress(receiver, meta, page_count, output_path, format, None)
+    }
+
+    /// Streams pages directly from a concurrent receiver channel and dumps them to disk in real time,
+    /// updating an optional interactive progress bar as pages are sequentially committed.
+    pub fn dump_stream_with_progress<P: AsRef<Path>>(
+        receiver: crossbeam_channel::Receiver<PageData>,
+        meta: &DocumentMeta,
+        page_count: u32,
+        output_path: P,
+        format: DumpFormat,
+        progress: Option<ProgressBar>,
     ) -> Result<OperationStats> {
         let path = output_path.as_ref();
         let start = Instant::now();
@@ -164,6 +177,9 @@ impl PdfUnloader {
                         let entry = PluFormat::write_page_record(&mut writer, &ready_page)?;
                         index_entries.push(entry);
                         next_expected += 1;
+                        if let Some(ref pb) = progress {
+                            pb.inc(1);
+                        }
                     }
                 }
 
@@ -173,6 +189,9 @@ impl PdfUnloader {
                     pages_processed += 1;
                     let entry = PluFormat::write_page_record(&mut writer, &ready_page)?;
                     index_entries.push(entry);
+                    if let Some(ref pb) = progress {
+                        pb.inc(1);
+                    }
                 }
 
                 PluFormat::finish_stream(&mut writer, stream_state, &index_entries, total_chars, total_words)?
@@ -205,6 +224,9 @@ impl PdfUnloader {
                         writer.write_all(b"\n\n")?;
                         total_bytes += (page_hdr.len() + ready_page.text.len() + 2) as u64;
                         next_expected += 1;
+                        if let Some(ref pb) = progress {
+                            pb.inc(1);
+                        }
                     }
                 }
 
@@ -221,6 +243,9 @@ impl PdfUnloader {
                     writer.write_all(ready_page.text.as_bytes())?;
                     writer.write_all(b"\n\n")?;
                     total_bytes += (page_hdr.len() + ready_page.text.len() + 2) as u64;
+                    if let Some(ref pb) = progress {
+                        pb.inc(1);
+                    }
                 }
 
                 writer.flush()?;
@@ -240,6 +265,9 @@ impl PdfUnloader {
                         writer.write_all(b"\n")?;
                         total_bytes += (line.len() + 1) as u64;
                         next_expected += 1;
+                        if let Some(ref pb) = progress {
+                            pb.inc(1);
+                        }
                     }
                 }
                 while let Some((_, ready_page)) = reorder_buffer.pop_first() {
@@ -251,6 +279,9 @@ impl PdfUnloader {
                     writer.write_all(line.as_bytes())?;
                     writer.write_all(b"\n")?;
                     total_bytes += (line.len() + 1) as u64;
+                    if let Some(ref pb) = progress {
+                        pb.inc(1);
+                    }
                 }
                 writer.flush()?;
                 total_bytes
@@ -265,6 +296,9 @@ impl PdfUnloader {
                         pages_processed += 1;
                         all_pages.push(ready_page);
                         next_expected += 1;
+                        if let Some(ref pb) = progress {
+                            pb.inc(1);
+                        }
                     }
                 }
                 while let Some((_, ready_page)) = reorder_buffer.pop_first() {
@@ -272,6 +306,9 @@ impl PdfUnloader {
                     total_words += ready_page.word_count;
                     pages_processed += 1;
                     all_pages.push(ready_page);
+                    if let Some(ref pb) = progress {
+                        pb.inc(1);
+                    }
                 }
                 let mut full_meta = meta.clone();
                 full_meta.total_chars = total_chars;
@@ -282,6 +319,112 @@ impl PdfUnloader {
                 fs::metadata(path)?.len()
             }
         };
+
+        if let Some(ref pb) = progress {
+            pb.finish_with_message("Done");
+        }
+
+        let duration_ms = start.elapsed().as_millis();
+
+        Ok(OperationStats {
+            pages_processed,
+            total_chars,
+            total_words,
+            bytes_written,
+            duration_ms,
+        })
+    }
+
+    /// Unloads / reads a `.plu` container file page-by-page into a formatted output text file,
+    /// verifying CRC32 checksums of each page record in real-time.
+    pub fn unload_to_file<P: AsRef<Path>, Q: AsRef<Path>>(
+        input_plu: P,
+        output_path: Q,
+        progress: Option<ProgressBar>,
+    ) -> Result<OperationStats> {
+        let in_path = input_plu.as_ref();
+        let out_path = output_path.as_ref();
+        let start = Instant::now();
+
+        if !in_path.exists() {
+            bail!("Input .plu file not found: {}", in_path.display());
+        }
+
+        let file = File::open(in_path)
+            .with_context(|| format!("Failed to open .plu file: {}", in_path.display()))?;
+        let mut reader = BufReader::with_capacity(128 * 1024, file);
+
+        if let Some(parent) = out_path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create output directory: {}", parent.display()))?;
+            }
+        }
+
+        let (meta, index_offset, page_count) = PluFormat::read_header_and_index_pos(&mut reader)?;
+
+        if let Some(ref pb) = progress {
+            pb.set_length(page_count as u64);
+        }
+
+        let out_file = File::create(out_path)
+            .with_context(|| format!("Failed to create output text file: {}", out_path.display()))?;
+        let mut writer = BufWriter::with_capacity(128 * 1024, out_file);
+
+        let header = format!(
+            "================================================================================\n\
+             PDF UNLOAD DUMP: {}\n\
+             Pages: {} | Characters: {} | Words: {}\n\
+             ================================================================================\n\n",
+            meta.source_path, page_count, meta.total_chars, meta.total_words
+        );
+        writer.write_all(header.as_bytes())?;
+        let mut bytes_written = header.len() as u64;
+
+        reader
+            .seek(SeekFrom::Start(index_offset))
+            .with_context(|| "Failed to seek to index table in .plu file")?;
+
+        let mut index_entries = Vec::with_capacity(page_count as usize);
+        for _ in 0..page_count {
+            let page_num = reader.read_u32::<LittleEndian>()?;
+            let offset = reader.read_u64::<LittleEndian>()?;
+            let length = reader.read_u32::<LittleEndian>()?;
+            index_entries.push((page_num, offset, length));
+        }
+
+        let mut pages_processed = 0u32;
+        let mut total_chars = 0usize;
+        let mut total_words = 0usize;
+
+        for (page_num, offset, _) in index_entries {
+            reader
+                .seek(SeekFrom::Start(offset))
+                .with_context(|| format!("Failed to seek to page {page_num}"))?;
+            let page = PluFormat::read_page_record(&mut reader)?;
+
+            let page_hdr = format!(
+                "--- PAGE {} ({}x{} pt | {} chars | {} words) ---\n",
+                page.page_num, page.width, page.height, page.char_count, page.word_count
+            );
+            writer.write_all(page_hdr.as_bytes())?;
+            writer.write_all(page.text.as_bytes())?;
+            writer.write_all(b"\n\n")?;
+
+            bytes_written += (page_hdr.len() + page.text.len() + 2) as u64;
+            total_chars += page.char_count;
+            total_words += page.word_count;
+            pages_processed += 1;
+
+            if let Some(ref pb) = progress {
+                pb.inc(1);
+            }
+        }
+
+        writer.flush()?;
+        if let Some(ref pb) = progress {
+            pb.finish_with_message("Done");
+        }
 
         let duration_ms = start.elapsed().as_millis();
 

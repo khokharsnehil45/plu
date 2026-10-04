@@ -2,14 +2,14 @@
 
 # ⚡ PLU: High-Performance PDF Loader & Unloader
 
-**A production-grade, multi-threaded PDF extraction and containerization engine written in Rust.**
+**A production-grade, concurrent PDF extraction and containerization engine written in Rust.**
 
 [![CI](https://github.com/khokharsnehil45/plu/actions/workflows/ci.yml/badge.svg)](https://github.com/khokharsnehil45/plu/actions)
 [![Rust Version](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)]()
 
-*Extract PDF content page-by-page concurrently across multi-core CPUs and stream into high-speed binary archives.*
+*Pure loading and unloading of PDF documents page-by-page with real-time progress bars, batch directory processing, and zero bloat.*
 
 </div>
 
@@ -24,13 +24,13 @@ curl -fsSL https://raw.githubusercontent.com/khokharsnehil45/plu/master/install.
 ```
 
 ### 🪟 Windows (PowerShell)
-Open PowerShell (as Administrator or standard user) and run:
+Open PowerShell and run:
 ```powershell
 irm https://raw.githubusercontent.com/khokharsnehil45/plu/master/install.ps1 | iex
 ```
 
 ### 📦 Via Cargo (Any OS)
-If you already have Rust / Cargo installed:
+If you have Rust / Cargo installed:
 ```bash
 cargo install --git https://github.com/khokharsnehil45/plu.git --force
 ```
@@ -39,7 +39,7 @@ cargo install --git https://github.com/khokharsnehil45/plu.git --force
 
 ## 🖥️ Interactive CLI UI
 
-Run `plu` with no arguments or pass `--ui` to launch the interactive terminal interface:
+Launch `plu` with no arguments or `--ui` to open the clean interactive terminal interface:
 
 ```bash
 plu
@@ -53,64 +53,95 @@ PLU v1.0.0 • PDF Loader & Unloader
  Welcome to PLU Engine!
  Ready to load PDF content and unload .plu files page by page.
 ────────────────────────────────────────────────────────────
- [1] Load & Dump PDF   Extract page-by-page text & dump into .plu
- [2] Unload .plu File  Read & inspect .plu container page by page
- [3] Read Single Page  O(1) random-access page reader from .plu
- [4] Unpack .plu Pages Unpack all pages from .plu into a folder
- [5] Exit              Quit PLU Engine
+ [1] Load PDF          Extract page-by-page (Single File or Batch Directory)
+ [2] Unload .plu       Unload page-by-page (Single File or Batch Directory)
+ [3] Exit              Quit PLU Engine
 ────────────────────────────────────────────────────────────
- Select an option [1-5]: 
+ Select an option [1-3]: 
 ```
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Usage & Features
 
-### 1. Load and Dump PDF Page-by-Page (`--load` & `--unload`)
-Load any PDF, extract page-by-page concurrently, and dump into the `.plu` high-speed binary format:
+PLU is engineered strictly for **Loading** and **Unloading** documents page-by-page at blazing speeds.
+
+### 1. Load PDF Page-by-Page (`--load` & `--unload`)
+Loads any PDF document, extracts page-by-page content concurrently across CPU cores, and dumps it into the `.plu` high-speed binary container:
+
 ```bash
+# Load PDF and unload into output container
 plu --load document.pdf --unload document.plu
+
+# Defaults unload destination to <file_stem>.plu
+plu --load document.pdf
 ```
 
-Dump into other formats by specifying the file extension or `--format`:
+Target alternative output formats on dump:
 ```bash
-# Formatted text with per-page delimiters
-plu --load document.pdf --unload document.txt
-
-# Structured JSON document
-plu --load document.pdf --unload document.json
-
-# Streaming JSON Lines (one line per page)
-plu --load document.pdf --unload document.jsonl
+plu --load document.pdf --unload document.txt     # Formatted text with per-page delimiters
+plu --load document.pdf --unload document.json    # Structured JSON document
+plu --load document.pdf --unload document.jsonl   # Streaming JSON Lines (one line per page)
 ```
 
-### 2. Read and Unload `.plu` Containers Page-by-Page (`--unload`)
+### 2. Unload `.plu` Files Page-by-Page (`--unload`)
+Reads `.plu` container archives page-by-page, verifies payload CRC32 checksums, and unloads text content:
+
 ```bash
-# Read container metadata, page count, and verify page checksums
+# Unload page-by-page (defaults to <file_stem>.txt)
 plu --unload document.plu
 
-# Inspect page-by-page dimensions, character & word counts
-plu --unload document.plu --verbose
+# Explicit destination output file
+plu --unload document.plu --output extracted.txt
+```
 
-# Microsecond O(1) random-access lookup for a single page
-plu --unload document.plu --page 42
+---
 
-# Unpack all pages into discrete files in a directory
-plu --unload document.plu --unpack ./extracted_pages/
+## 🔄 Batch Processing Add-On
+
+PLU includes built-in batch processing for handling entire directories of PDFs or `.plu` archives:
+
+### Batch Loading (Directory of PDFs ➔ `.plu` Containers)
+```bash
+# Automatically detects directory and batch-loads all .pdf files
+plu --load ./documents_dir/ --unload ./plu_output_dir/
+
+# Or explicitly flag batch mode
+plu --batch --load ./documents_dir/ --unload ./plu_output_dir/
+```
+
+### Batch Unloading (Directory of `.plu` ➔ Text Dumps)
+```bash
+# Batch unloads every .plu container page-by-page into output folder
+plu --unload ./plu_output_dir/ --output ./text_dumps/
+```
+
+---
+
+## 📊 Real-Time Progress Bar
+
+During both single-file and batch operations, PLU displays an interactive progress bar showing:
+- Real-time extraction and write status
+- Processing speed (`pages/sec`)
+- Elapsed time and progress percentage
+- Multi-progress bars during batch runs for simultaneous file and page tracking
+
+```text
+⠋ [00:00:02] [██████████████████████████████] 1,282/1,282 pages (6,512.4 pages/s) Done
 ```
 
 ---
 
 ## 🏗️ Architecture
 
-PLU is engineered around a clean separation of concerns between two independent components connected via lock-free concurrent streaming:
+PLU separates data ingestion and persistence into two independent decoupled components connected by a bounded lock-free channel:
 
 ```
                       +---------------------------------------+
-                      |           Input PDF File              |
+                      |           Input PDF File(s)           |
                       +---------------------------------------+
-                                          |
-                                          v
+                                           |
+                                           v
                       +---------------------------------------+
                       |           LOADER COMPONENT            |
                       |    (Rayon Multi-Core Worker Pool)     |
@@ -120,13 +151,13 @@ PLU is engineered around a clean separation of concerns between two independent 
                      [Page 1]    [Page 2]    [Page 3]    [Page N]
                         |           |           |           |
                         +-----------+-----+-----+-----------+
-                                          |
-                                          v  (Real-time Lock-free Stream)
+                                           |
+                                           v  (Lock-Free Channel Stream)
                       +---------------------------------------+
-                      | Bounded Channel (crossbeam-channel)   |
+                      | Bounded Queue (crossbeam-channel)     |
                       +---------------------------------------+
-                                          |
-                                          v
+                                           |
+                                           v
                       +---------------------------------------+
                       |          UNLOADER COMPONENT           |
                       |       (Dedicated OS Thread)           |
@@ -134,25 +165,26 @@ PLU is engineered around a clean separation of concerns between two independent 
                       |   • Reorder Buffer (Page 1, 2, 3...)  |
                       |   • Direct Disk I/O Streaming         |
                       |   • In-flight CRC32 & Index Tracking  |
+                      |   • Interactive Progress Bar Updates  |
                       +---------------------------------------+
-                                          |
-                                          v
+                                           |
+                                           v
                       +---------------------------------------+
-                      |         Target Dump (.plu)            |
+                      |       Dumped Container (.plu / text)  |
                       +---------------------------------------+
 ```
 
 ### Key Architectural Pillars:
 1. **The Loader Component (`PdfLoader`)**:
-   - Parses the document catalog and page object hierarchy.
+   - Parses the document catalog and object hierarchy.
    - Extracts page-level metadata (`MediaBox` / `CropBox` dimensions in points, title, author).
    - Distributes page extraction concurrently across CPU cores via Rayon worker threads.
-   - Resolves font encodings, CMaps, CID fonts, and content streams with UTF-16BE BOM decoding.
+   - Handles font encodings, CMaps, CID fonts, and content streams with UTF-16BE/LE BOM decoding.
 2. **Concurrent Streaming Pipeline**:
    - As each page is parsed by any worker thread, it is immediately sent into a bounded lock-free channel.
    - Memory usage is bounded to $O(\text{queue\_capacity})$ rather than loading the whole PDF into RAM.
 3. **The Unloader Component (`PdfUnloader`)**:
-   - Runs concurrently on its own dedicated OS thread (`plu-unloader`).
+   - Runs concurrently on its own dedicated OS thread (`unloader`).
    - Maintains an internal $O(\log k)$ reorder buffer to guarantee deterministic sequential output (`Page 1, Page 2...`) even when worker threads complete out of order.
    - Streams page payloads straight to disk buffered I/O while generating index tables and verifying CRC32 checksums.
 
@@ -197,11 +229,6 @@ The native `.plu` container is a high-performance binary format engineered for z
 +-------------------------------------------------------------+
 ```
 
-### Advantages of `.plu`:
-- **Microsecond $O(1)$ Page Seeks**: Direct random access to page $N$ in a 5,000-page archive without scanning previous pages.
-- **Data Integrity**: Every page payload has an isolated CRC32 checksum.
-- **Zero Serialization Bloat**: Binary little-endian layout is 5-10x smaller than raw JSON without sacrificing metadata.
-
 ---
 
 ## 📊 Benchmarks
@@ -214,7 +241,7 @@ Evaluated on an 8.4 MB document (*Programming Rust, 2nd Edition*):
 | **Total Text Volume** | **1,488,256 characters** / **253,133 words** |
 | **Parallel Extraction Throughput** | **~6,500+ pages/second** |
 | **Total Concurrent Pipeline Time** | **592 ms** |
-| **Single Page Random Lookup** | **24 – 64 microseconds** |
+| **Integrity Verification** | **Hardware-accelerated CRC32 per page** |
 
 ---
 
@@ -224,15 +251,15 @@ Evaluated on an 8.4 MB document (*Programming Rust, 2nd Edition*):
 Usage: plu [OPTIONS]
 
 Options:
-  -l, --load <FILE_PATH>     Path to the input PDF file to load (page-by-page extraction)
-  -u, --unload <FILE_PATH>   Path to the file to dump / unload to, or .plu file to unload from
-  -p, --page <PAGE_NUM>      Specific page number to inspect or extract (1-based)
-      --unpack <OUTPUT_DIR>  Unpack all pages from a .plu file into individual files
-  -t, --threads <N>          Number of worker threads (default: available CPU cores)
-  -f, --format <FORMAT>      Target output format (plu, txt, json, jsonl)
-  -v, --verbose              Verbose output with per-page metrics breakdown
-  -h, --help                 Print help
-  -V, --version              Print version
+  -l, --load <PATH>      Path to input PDF file or directory to load (page-by-page extraction)
+  -u, --unload <PATH>    Path to file/directory to dump to, or .plu file/directory to unload from
+  -o, --output <PATH>    Output destination path for unloading (default: <stem>.txt or <dir>_unloaded)
+  -b, --batch            Explicitly enable batch processing mode
+  -t, --threads <N>      Number of worker threads (default: CPU cores)
+  -f, --format <FORMAT>  Force output format when loading (plu, txt, json, jsonl)
+      --ui               Launch interactive terminal UI
+  -h, --help             Print help
+  -V, --version          Print version
 ```
 
 ---
@@ -242,23 +269,21 @@ Options:
 PLU can also be embedded directly in your Rust applications:
 
 ```rust
-use plu::{PdfLoader, PdfUnloader, DumpFormat, load_and_unload};
+use plu::{PdfLoader, PdfUnloader, DumpFormat, load_and_unload, run_batch_load, run_batch_unload};
 use std::path::Path;
 
 fn main() -> anyhow::Result<()> {
-    // 1. One-line concurrent pipeline
+    // 1. Concurrent single file pipeline
     load_and_unload("book.pdf", "output.plu", Some(8))?;
 
-    // 2. Or use individual components directly:
-    let loader = PdfLoader::load_file("book.pdf")?;
-    println!("Pages: {}", loader.page_count());
+    // 2. Unload .plu file page-by-page into text
+    PdfUnloader::unload_to_file("output.plu", "output.txt", None)?;
 
-    let page_1 = loader.extract_page(1)?;
-    println!("Page 1 text: {}", page_1.text);
+    // 3. Batch load directory of PDFs
+    run_batch_load(Path::new("./pdfs"), Path::new("./plus"), Some(8), DumpFormat::Plu)?;
 
-    // 3. Inspect a dumped container with O(1) random lookup
-    let page_42 = PdfUnloader::unload_single_page("output.plu", 42)?;
-    println!("Page 42 dimensions: {}x{}", page_42.width, page_42.height);
+    // 4. Batch unload directory of .plu containers
+    run_batch_unload(Path::new("./plus"), Path::new("./texts"))?;
 
     Ok(())
 }

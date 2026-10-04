@@ -100,10 +100,58 @@ fn test_pdf_loader_and_unloader_e2e() {
     assert_eq!(unloaded_doc.pages.len(), 1);
     assert!(unloaded_doc.pages[0].text.contains("SILICON VALLEY COMMERCE BANK"));
 
-    // 4. Unpack directory test
-    let unpack_dir = dir.path().join("unpacked");
-    let count = PdfUnloader::unpack_to_directory(&plu_path, &unpack_dir).unwrap();
-    assert_eq!(count, 1);
-    assert!(unpack_dir.join("metadata.json").exists());
-    assert!(unpack_dir.join("page_0001.txt").exists());
+    // 4. Unload to text file test
+    let text_path = dir.path().join("dump.txt");
+    let unload_stats = PdfUnloader::unload_to_file(&plu_path, &text_path, None).expect("Failed to unload to file");
+    assert_eq!(unload_stats.pages_processed, 1);
+    assert!(text_path.exists());
+    let text_content = std::fs::read_to_string(&text_path).unwrap();
+    assert!(text_content.contains("SILICON VALLEY COMMERCE BANK"));
+    assert!(text_content.contains("--- PAGE 1"));
 }
+
+#[test]
+fn test_batch_load_and_unload() {
+    let pdf_path = "/home/kevin/sample_bank_receipt.pdf";
+    if !std::path::Path::new(pdf_path).exists() {
+        return;
+    }
+
+    let input_dir = tempdir().unwrap();
+    let plu_dir = tempdir().unwrap();
+    let txt_dir = tempdir().unwrap();
+
+    // Copy sample PDF to create multiple files for batch test
+    std::fs::copy(pdf_path, input_dir.path().join("doc1.pdf")).unwrap();
+    std::fs::copy(pdf_path, input_dir.path().join("doc2.pdf")).unwrap();
+
+    // 1. Discover files
+    let found = plu::batch::discover_files(input_dir.path(), "pdf").unwrap();
+    assert_eq!(found.len(), 2);
+
+    // 2. Batch load
+    let load_stats = plu::batch::run_batch_load(
+        input_dir.path(),
+        plu_dir.path(),
+        Some(2),
+        DumpFormat::Plu,
+    ).expect("Batch load failed");
+    assert_eq!(load_stats.files_processed, 2);
+    assert_eq!(load_stats.total_pages, 2);
+    assert!(plu_dir.path().join("doc1.plu").exists());
+    assert!(plu_dir.path().join("doc2.plu").exists());
+
+    // 3. Batch unload
+    let unload_stats = plu::batch::run_batch_unload(
+        plu_dir.path(),
+        txt_dir.path(),
+    ).expect("Batch unload failed");
+    assert_eq!(unload_stats.files_processed, 2);
+    assert_eq!(unload_stats.total_pages, 2);
+    assert!(txt_dir.path().join("doc1.txt").exists());
+    assert!(txt_dir.path().join("doc2.txt").exists());
+
+    let doc1_txt = std::fs::read_to_string(txt_dir.path().join("doc1.txt")).unwrap();
+    assert!(doc1_txt.contains("SILICON VALLEY COMMERCE BANK"));
+}
+
