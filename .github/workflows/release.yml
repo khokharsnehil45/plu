@@ -51,9 +51,9 @@ jobs:
           cd target/${{ matrix.target }}/release
           tar -czf ../../../${{ matrix.archive_name }} ${{ matrix.binary_name }}
           cd ../../..
-          # Provide alias for arm64 if aarch64
-          if [[ "${{ matrix.archive_name }}" == *"aarch64"* ]]; then
-            cp "${{ matrix.archive_name }}" "${{ matrix.archive_name//aarch64/arm64}}"
+          ARCHIVE="${{ matrix.archive_name }}"
+          if [[ "$ARCHIVE" == *"aarch64"* ]]; then
+            cp "$ARCHIVE" "${ARCHIVE//aarch64/arm64}"
           fi
 
       - name: Package binary (Windows)
