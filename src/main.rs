@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use plu::loader::PdfLoader;
-use plu::types::{DumpFormat, PluDocument};
+use plu::types::{DumpFormat, PageData, PluDocument};
 use plu::unloader::PdfUnloader;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -11,7 +11,7 @@ use std::time::Instant;
     name = "plu",
     author = "High Performance PDF Systems",
     version = "1.0.0",
-    about = "High-performance PDF Loader and Unloader with page-by-page extraction"
+    about = "High-performance PDF Loader and Unloader with concurrent page-by-page extraction"
 )]
 struct Args {
     /// Path to the input PDF file to load (page-by-page extraction)
@@ -92,10 +92,10 @@ fn run(args: Args) -> Result<()> {
     }
 }
 
-/// Executes the full loader -> unloader pipeline
+/// Executes the concurrent loader -> unloader streaming pipeline
 fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> Result<()> {
     println!("\x1b[1;36m========================================================\x1b[0m");
-    println!("\x1b[1;36m  PLU: High-Performance PDF Loader & Unloader\x1b[0m");
+    println!("\x1b[1;36m  PLU: High-Performance Concurrent PDF Pipeline\x1b[0m");
     println!("\x1b[1;36m========================================================\x1b[0m");
     println!("[Loader] Loading PDF: \x1b[1m{}\x1b[0m", load_path.display());
 
@@ -121,64 +121,6 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
         println!("[Loader] Document Author: {author}");
     }
 
-    // 2. Page-by-Page Extraction
-    let extract_start = Instant::now();
-    println!(
-        "[Loader] Starting parallel page-by-page extraction (threads: {})...",
-        args.threads
-            .map(|t| t.to_string())
-            .unwrap_or_else(|| "auto".to_string())
-    );
-
-    let pages = if let Some(single_page) = args.page {
-        if single_page < 1 || single_page > total_pages {
-            bail!("Requested page {single_page} is out of range (1..={total_pages})");
-        }
-        vec![loader.extract_page(single_page)?]
-    } else {
-        loader.extract_all_parallel(args.threads)?
-    };
-
-    let extract_duration = extract_start.elapsed();
-    let total_chars: usize = pages.iter().map(|p| p.char_count).sum();
-    let total_words: usize = pages.iter().map(|p| p.word_count).sum();
-    let pages_count = pages.len();
-
-    let pps = if extract_duration.as_secs_f64() > 0.0 {
-        pages_count as f64 / extract_duration.as_secs_f64()
-    } else {
-        pages_count as f64
-    };
-
-    println!(
-        "[Loader] Page-by-page extraction complete: \x1b[1;32m{} pages\x1b[0m ({:.1} pages/sec) in {:.2?}",
-        pages_count, pps, extract_duration
-    );
-    println!(
-        "[Loader] Extracted \x1b[1m{} characters\x1b[0m, \x1b[1m{} words\x1b[0m",
-        total_chars, total_words
-    );
-
-    if args.verbose {
-        println!("\n[Loader] Page Breakdown:");
-        for p in &pages {
-            println!(
-                "  • Page {:>4}: {:>6.1}x{:<6.1} pt | {:>6} chars | {:>6} words",
-                p.page_num, p.width, p.height, p.char_count, p.word_count
-            );
-        }
-        println!();
-    }
-
-    // 3. Initialize Unloader Component and Dump
-    println!("[Unloader] Initializing dump to: \x1b[1m{}\x1b[0m", unload_path.display());
-    let doc = PluDocument::new(
-        loader.source_path().to_string_lossy().to_string(),
-        doc_meta.title,
-        doc_meta.author,
-        pages,
-    );
-
     let dump_format = if let Some(ref fmt) = args.format {
         match fmt.to_ascii_lowercase().as_str() {
             "plu" => DumpFormat::Plu,
@@ -192,20 +134,80 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     };
 
     println!("[Unloader] Target Format: \x1b[1;35m{}\x1b[0m", dump_format);
+    println!("[Unloader] Target File  : \x1b[1m{}\x1b[0m", unload_path.display());
 
-    let stats = PdfUnloader::dump_with_format(&doc, unload_path, dump_format)
-        .with_context(|| format!("Unloader failed to write dump to {}", unload_path.display()))?;
+    let stats = if let Some(single_page) = args.page {
+        // Single page extraction mode
+        if single_page < 1 || single_page > total_pages {
+            bail!("Requested page {single_page} is out of range (1..={total_pages})");
+        }
+        println!("[Loader] Extracting single page: {}", single_page);
+        let page = loader.extract_page(single_page)?;
+        let doc = PluDocument::new(
+            loader.source_path().to_string_lossy().to_string(),
+            doc_meta.title,
+            doc_meta.author,
+            vec![page],
+        );
+        PdfUnloader::dump_with_format(&doc, unload_path, dump_format)?
+    } else {
+        // Multi-threaded concurrent streaming mode:
+        // - Loader thread pool extracts pages concurrently across all CPU cores
+        // - Bounded channel streams finished pages in real time
+        // - Unloader thread actively writes/dumps to disk overlapping I/O and CPU
+        let effective_threads = args
+            .threads
+            .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
+
+        println!(
+            "[Pipeline] Starting concurrent execution (Worker Threads: {}, Dedicated Unloader Thread: 1)...",
+            effective_threads
+        );
+
+        let channel_cap = (effective_threads * 4).max(32);
+        let (tx, rx) = crossbeam_channel::bounded::<PageData>(channel_cap);
+
+        let unloader_path = unload_path.to_path_buf();
+        let unloader_meta = doc_meta.clone();
+
+        // Spawn Unloader on dedicated thread
+        let unloader_handle = std::thread::Builder::new()
+            .name("unloader".to_string())
+            .spawn(move || {
+                PdfUnloader::dump_stream(rx, &unloader_meta, total_pages, unloader_path, dump_format)
+            })
+            .context("Failed to spawn Unloader thread")?;
+
+        // Parallel extraction on Rayon worker pool
+        loader.stream_pages_parallel(tx, args.threads)?;
+
+        // Wait for Unloader to flush and finish
+        unloader_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("Unloader thread panicked"))??
+    };
 
     let total_elapsed = overall_start.elapsed();
+    let pps = if total_elapsed.as_secs_f64() > 0.0 {
+        stats.pages_processed as f64 / total_elapsed.as_secs_f64()
+    } else {
+        stats.pages_processed as f64
+    };
 
     println!("\x1b[1;32m========================================================\x1b[0m");
     println!("\x1b[1;32m  PLU Pipeline Complete Successfully!\x1b[0m");
     println!("\x1b[1;32m========================================================\x1b[0m");
     println!("  Output File     : {}", unload_path.display());
-    println!("  Pages Dumped    : {}", stats.pages_processed);
-    println!("  Payload Size    : {:.2} KB ({} bytes)", stats.bytes_written as f64 / 1024.0, stats.bytes_written);
-    println!("  Unloader Time   : {} ms", stats.duration_ms);
-    println!("  Total Time      : {:.2?}", total_elapsed);
+    println!("  Pages Processed : {}", stats.pages_processed);
+    println!("  Total Chars     : {}", stats.total_chars);
+    println!("  Total Words     : {}", stats.total_words);
+    println!(
+        "  Payload Size    : {:.2} KB ({} bytes)",
+        stats.bytes_written as f64 / 1024.0,
+        stats.bytes_written
+    );
+    println!("  Throughput      : \x1b[1;32m{:.1} pages/sec\x1b[0m", pps);
+    println!("  Total Time      : \x1b[1m{:.2?}\x1b[0m", total_elapsed);
     println!("\x1b[1;32m========================================================\x1b[0m");
 
     Ok(())

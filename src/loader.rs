@@ -127,19 +127,31 @@ impl PdfLoader {
         results
     }
 
-    /// Streams extracted pages through a bounded crossbeam channel.
-    /// This enables real-time pipelining between the Loader and Unloader components.
+    /// Streams extracted pages concurrently through a bounded crossbeam channel.
+    /// Each page is sent to the channel immediately upon completion by parallel worker threads.
     pub fn stream_pages_parallel(
         &self,
         sender: crossbeam_channel::Sender<PageData>,
         num_threads: Option<usize>,
     ) -> Result<()> {
-        let pages = self.extract_all_parallel(num_threads)?;
-        for page in pages {
-            sender
-                .send(page)
-                .map_err(|e| anyhow::anyhow!("Channel send error: {e}"))?;
-        }
+        let pool = match num_threads {
+            Some(threads) if threads > 0 => rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .with_context(|| "Failed to initialize Rayon thread pool")?,
+            _ => rayon::ThreadPoolBuilder::new()
+                .build()
+                .with_context(|| "Failed to initialize default Rayon thread pool")?,
+        };
+
+        let page_nums: Vec<u32> = (1..=self.meta.page_count).collect();
+        pool.install(|| {
+            page_nums.par_iter().for_each(|&page_num| {
+                if let Ok(page) = self.extract_page(page_num) {
+                    let _ = sender.send(page);
+                }
+            });
+        });
         Ok(())
     }
 
