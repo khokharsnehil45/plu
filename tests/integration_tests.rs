@@ -155,3 +155,17 @@ fn test_batch_load_and_unload() {
     assert!(doc1_txt.contains("SILICON VALLEY COMMERCE BANK"));
 }
 
+#[test]
+fn test_ocr_detection_and_availability() {
+    let avail = plu::ocr::is_ocr_available();
+    if avail {
+        let pdf_path = "/home/kevin/sample_bank_receipt.pdf";
+        if std::path::Path::new(pdf_path).exists() {
+            let ocr_result = plu::ocr::ocr_page(std::path::Path::new(pdf_path), 1, "eng");
+            assert!(ocr_result.is_ok());
+            let text = ocr_result.unwrap();
+            assert!(text.contains("SILICON VALLEY COMMERCE BANK"));
+        }
+    }
+}
+

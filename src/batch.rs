@@ -85,6 +85,18 @@ pub fn run_batch_load(
     threads: Option<usize>,
     format: DumpFormat,
 ) -> Result<BatchStats> {
+    run_batch_load_with_ocr(input_dir, output_dir, threads, format, true, "eng")
+}
+
+/// Executes batch loading with explicit OCR settings.
+pub fn run_batch_load_with_ocr(
+    input_dir: &Path,
+    output_dir: &Path,
+    threads: Option<usize>,
+    format: DumpFormat,
+    ocr_enabled: bool,
+    ocr_lang: &str,
+) -> Result<BatchStats> {
     let start = Instant::now();
     let pdf_files = discover_files(input_dir, "pdf")?;
 
@@ -119,8 +131,8 @@ pub fn run_batch_load(
 
         file_pb.set_message(format!("Loading {}", file_stem));
 
-        // Load PDF
-        let loader = match PdfLoader::load_file(pdf_path) {
+        // Load PDF with OCR configuration
+        let loader = match PdfLoader::load_file_with_ocr(pdf_path, ocr_enabled, ocr_lang) {
             Ok(l) => l,
             Err(e) => {
                 batch_stats.failed_files.push((pdf_path.clone(), e.to_string()));

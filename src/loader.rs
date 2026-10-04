@@ -1,3 +1,4 @@
+use crate::ocr::{is_ocr_available, ocr_page};
 use crate::types::{DocumentMeta, PageData};
 use anyhow::{bail, Context, Result};
 use lopdf::content::Content;
@@ -13,11 +14,22 @@ pub struct PdfLoader {
     doc: Arc<Document>,
     pages_map: BTreeMap<u32, ObjectId>,
     meta: DocumentMeta,
+    ocr_enabled: bool,
+    ocr_lang: String,
 }
 
 impl PdfLoader {
-    /// Loads a PDF document from a file path with strict validation.
+    /// Loads a PDF document from a file path with default auto-OCR enabled.
     pub fn load_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::load_file_with_ocr(path, true, "eng")
+    }
+
+    /// Loads a PDF document with explicit OCR configuration.
+    pub fn load_file_with_ocr<P: AsRef<Path>>(
+        path: P,
+        ocr_enabled: bool,
+        ocr_lang: &str,
+    ) -> Result<Self> {
         let path_buf = path.as_ref().to_path_buf();
         if !path_buf.exists() {
             bail!("Input PDF file not found: {}", path_buf.display());
@@ -53,6 +65,8 @@ impl PdfLoader {
             doc,
             pages_map,
             meta,
+            ocr_enabled,
+            ocr_lang: ocr_lang.to_string(),
         })
     }
 
@@ -72,6 +86,8 @@ impl PdfLoader {
     }
 
     /// Extracts a single page by its 1-based page number.
+    /// Uses sub-millisecond digital stream extraction by default, with automatic OCR fallback
+    /// for scanned image pages when digital text is absent or sparse.
     pub fn extract_page(&self, page_num: u32) -> Result<PageData> {
         let page_id = self
             .pages_map
@@ -81,7 +97,7 @@ impl PdfLoader {
 
         let (width, height) = Self::get_page_dimensions(&self.doc, page_id);
 
-        let text = match self.doc.extract_text(&[page_num]) {
+        let mut text = match self.doc.extract_text(&[page_num]) {
             Ok(t) => t,
             Err(_) => {
                 // Fallback to manual content stream decoding
@@ -89,6 +105,22 @@ impl PdfLoader {
                     .unwrap_or_default()
             }
         };
+
+        // If digital text is absent or sparse (< 20 non-whitespace chars), check for images and trigger OCR
+        let non_ws_chars = text.chars().filter(|c| !c.is_whitespace()).count();
+        if self.ocr_enabled && non_ws_chars < 20 {
+            let has_images = Self::page_has_images(&self.doc, page_id);
+            if has_images || non_ws_chars == 0 {
+                if is_ocr_available() {
+                    if let Ok(ocr_text) = ocr_page(&self.source_path, page_num, &self.ocr_lang) {
+                        let ocr_non_ws = ocr_text.chars().filter(|c| !c.is_whitespace()).count();
+                        if ocr_non_ws > non_ws_chars {
+                            text = ocr_text;
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(PageData::new(page_num, width, height, text))
     }
@@ -310,5 +342,42 @@ impl PdfLoader {
                 _ => {}
             }
         }
+    }
+
+    /// Inspects the page dictionary and resources to detect if any image XObjects are present.
+    pub fn page_has_images(doc: &Document, page_id: ObjectId) -> bool {
+        if let Ok(page_dict) = doc.get_object(page_id).and_then(Object::as_dict) {
+            let res_dict = page_dict.get(b"Resources").ok().and_then(|res_obj| match res_obj {
+                Object::Reference(id) => doc.get_object(*id).ok().and_then(|o| o.as_dict().ok()),
+                Object::Dictionary(dict) => Some(dict),
+                _ => None,
+            });
+
+            if let Some(res) = res_dict {
+                if let Ok(xobj) = res.get(b"XObject") {
+                    let xobj_dict = match xobj {
+                        Object::Reference(id) => doc.get_object(*id).ok().and_then(|o| o.as_dict().ok()),
+                        Object::Dictionary(dict) => Some(dict),
+                        _ => None,
+                    };
+                    if let Some(xobjects) = xobj_dict {
+                        for (_, obj_ref) in xobjects.iter() {
+                            let obj = match obj_ref {
+                                Object::Reference(id) => doc.get_object(*id).ok(),
+                                other => Some(other),
+                            };
+                            if let Some(Object::Stream(stream)) = obj {
+                                if let Ok(subtype) = stream.dict.get(b"Subtype").and_then(Object::as_name) {
+                                    if subtype == b"Image" {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 }

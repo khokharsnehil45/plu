@@ -63,21 +63,41 @@ PLU v1.0.0 • PDF Loader & Unloader
 
 ## 🚀 Unified Pipeline: Load & Unload
 
-PLU is engineered around a single unified pipeline holding **Load** and **Unload** together. The Loader extracts PDF content page-by-page concurrently across multi-core CPUs, and the Unloader writes it directly into the high-performance `.plu` container:
+PLU is engineered around a single unified pipeline holding **Load** and **Unload** together. The Loader extracts PDF content page-by-page concurrently across multi-core CPUs, and the Unloader writes it directly into clean formatted text:
 
 ```bash
-# Load PDF and unload into output container
-plu --load document.pdf --unload document.plu
+# Load PDF and unload into output text file
+plu --load document.pdf --unload document.txt
 
-# Defaults unload destination to <file_stem>.plu
+# Defaults unload destination to <file_stem>.txt
 plu --load document.pdf
 ```
 
 Target alternative output formats on dump:
 ```bash
-plu --load document.pdf --unload document.txt     # Formatted text with per-page delimiters
+plu --load document.pdf --unload document.plu     # High-speed binary container
 plu --load document.pdf --unload document.json    # Structured JSON document
 plu --load document.pdf --unload document.jsonl   # Streaming JSON Lines (one line per page)
+```
+
+---
+
+## 🔍 Smart OCR Feature (Scanned & Image PDFs)
+
+PLU includes an intelligent **hybrid extraction engine**:
+- **Digital PDFs**: Extracted via sub-millisecond font/CMap stream parsing at **~6,500+ pages/second**.
+- **Scanned & Image PDFs**: Automatically detected. When a page has no digital text or contains scanned images, PLU seamlessly activates an in-memory streaming OCR pipeline (`pdftoppm` + `tesseract`).
+- **Zero Disk Writes**: The OCR pipeline streams rasterized pages directly through kernel memory pipes with zero temp files written to disk.
+
+```bash
+# Automatic OCR on image/scanned documents (enabled by default)
+plu --load scanned_document.pdf
+
+# Disable OCR (pure digital text extraction only)
+plu --load document.pdf --no-ocr
+
+# Specify OCR language (default: eng)
+plu --load document.pdf --ocr-lang eng
 ```
 
 ---
@@ -86,13 +106,13 @@ plu --load document.pdf --unload document.jsonl   # Streaming JSON Lines (one li
 
 PLU includes built-in batch processing for handling entire directories of PDFs:
 
-### Batch Load & Unload (Directory of PDFs ➔ `.plu` Containers)
+### Batch Load & Unload (Directory of PDFs ➔ Text Dumps)
 ```bash
 # Automatically detects directory and batch-loads all .pdf files
-plu --load ./documents_dir/ --unload ./plu_output_dir/
+plu --load ./documents_dir/ --unload ./text_output_dir/
 
 # Or explicitly flag batch mode
-plu --batch --load ./documents_dir/ --unload ./plu_output_dir/
+plu --batch --load ./documents_dir/ --unload ./text_output_dir/
 ```
 
 ---
@@ -230,14 +250,16 @@ Evaluated on an 8.4 MB document (*Programming Rust, 2nd Edition*):
 Usage: plu [OPTIONS]
 
 Options:
-  -l, --load <PATH>      Path to input PDF file or directory to load (page-by-page extraction)
-  -u, --unload <PATH>    Path to file/directory to unload/dump to (default: <stem>.plu or <dir>_plu)
-  -b, --batch            Explicitly enable batch processing mode
-  -t, --threads <N>      Number of worker threads for parallel extraction (default: CPU cores)
-  -f, --format <FORMAT>  Force output format when dumping (plu, txt, json, jsonl)
-      --ui               Launch interactive terminal UI
-  -h, --help             Print help
-  -V, --version          Print version
+  -l, --load <PATH>        Path to input PDF file or directory to load (page-by-page extraction)
+  -u, --unload <PATH>      Path to file/directory to unload/dump to (default: <stem>.txt or <dir>_txt)
+  -b, --batch              Explicitly enable batch processing mode
+  -t, --threads <N>        Number of worker threads for parallel extraction (default: CPU cores)
+  -f, --format <FORMAT>    Force output format when dumping (txt, plu, json, jsonl)
+      --no-ocr             Disable automatic OCR fallback for scanned images
+      --ocr-lang <LANG>    Language code for Tesseract OCR (default: eng)
+      --ui                 Launch interactive terminal UI
+  -h, --help               Print help
+  -V, --version            Print version
 ```
 
 ---

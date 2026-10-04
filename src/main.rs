@@ -40,6 +40,14 @@ struct Args {
     #[arg(short = 'f', long = "format", value_name = "FORMAT")]
     format: Option<String>,
 
+    /// Disable automatic OCR fallback for scanned images
+    #[arg(long = "no-ocr")]
+    no_ocr: bool,
+
+    /// Language code for Tesseract OCR (default: eng)
+    #[arg(long = "ocr-lang", default_value = "eng")]
+    ocr_lang: String,
+
     /// Launch interactive terminal UI
     #[arg(long = "ui")]
     ui: bool,
@@ -72,7 +80,14 @@ fn run(args: Args) -> Result<()> {
                 } else {
                     PdfUnloader::detect_format(unload_path)
                 };
-                let stats = batch::run_batch_load(load_path, unload_path, args.threads, fmt)?;
+                let stats = batch::run_batch_load_with_ocr(
+                    load_path,
+                    unload_path,
+                    args.threads,
+                    fmt,
+                    !args.no_ocr,
+                    &args.ocr_lang,
+                )?;
                 print_batch_summary(&stats, "LOAD & UNLOAD", unload_path);
                 Ok(())
             } else {
@@ -88,7 +103,14 @@ fn run(args: Args) -> Result<()> {
                     .unwrap_or(load_path)
                     .join(format!("{}_txt", load_path.file_name().unwrap().to_string_lossy()));
                 let fmt = parse_format(args.format.as_deref())?;
-                let stats = batch::run_batch_load(load_path, &default_out, args.threads, fmt)?;
+                let stats = batch::run_batch_load_with_ocr(
+                    load_path,
+                    &default_out,
+                    args.threads,
+                    fmt,
+                    !args.no_ocr,
+                    &args.ocr_lang,
+                )?;
                 print_batch_summary(&stats, "LOAD & UNLOAD", &default_out);
                 Ok(())
             } else {
@@ -135,7 +157,7 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
 
     // 1. Initialize Loader Component
     let loader_start = Instant::now();
-    let loader = PdfLoader::load_file(load_path)
+    let loader = PdfLoader::load_file_with_ocr(load_path, !args.no_ocr, &args.ocr_lang)
         .with_context(|| format!("Loader failed to open PDF: {}", load_path.display()))?;
 
     let total_pages = loader.page_count();
@@ -154,6 +176,15 @@ fn handle_load_and_unload(load_path: &Path, unload_path: &Path, args: &Args) -> 
     if let Some(ref author) = doc_meta.author {
         print_kv("Document Author", author);
     }
+
+    let ocr_status = if args.no_ocr {
+        "Disabled (--no-ocr)"
+    } else if plu::ocr::is_ocr_available() {
+        "Active (Auto Tesseract + pdftoppm)"
+    } else {
+        "Unavailable (tesseract/pdftoppm not found)"
+    };
+    print_kv("OCR Engine", ocr_status);
 
     let dump_format = if let Some(ref fmt) = args.format {
         parse_format(Some(fmt))?
