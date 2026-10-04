@@ -79,5 +79,7 @@ if (Get-Command plu -ErrorAction SilentlyContinue) {
 }
 
 Write-Host "`nUsage:" -ForegroundColor Green
-Write-Host "  plu --load input.pdf --unload output.plu"
-Write-Host "  plu --unload output.plu"
+Write-Host "  plu --load input.pdf --unload output.md"
+Write-Host "  plu --load input.pdf -f md"
+Write-Host "  plu --load .\documents\ -f md"
+Write-Host "  plu --ui"

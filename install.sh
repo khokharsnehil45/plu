@@ -83,5 +83,7 @@ else
 fi
 
 echo -e "\n${GREEN}Usage:${NC}"
-echo -e "  plu --load input.pdf --unload output.plu"
-echo -e "  plu --unload output.plu"
+echo -e "  plu --load input.pdf --unload output.md"
+echo -e "  plu --load input.pdf -f md"
+echo -e "  plu --load ./documents/ -f md"
+echo -e "  plu --ui"
